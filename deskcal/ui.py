@@ -78,7 +78,9 @@ class Fetcher(QObject):
 
     def _run(self) -> None:
         try:
-            events, errors = fetch_events(self.cfg.calendars, self.cfg.my_emails)
+            events, errors = fetch_events(
+                self.cfg.calendars, self.cfg.my_emails, self.cfg.google_calendars
+            )
         except Exception as exc:  # never let the thread die silently
             log.exception("Fetch failed")
             events, errors = None, [str(exc)]
@@ -247,6 +249,7 @@ class MainWindow(QWidget):
 
         self.status = label("", 13, MUTED, 400)
         self.status.setAlignment(Qt.AlignRight)
+        self.status.setWordWrap(True)  # long error text mustn't widen the window
         root.addWidget(self.status)
 
     def _style_card(self, color: str) -> None:
@@ -305,11 +308,12 @@ class MainWindow(QWidget):
             self.next_tag.setText("ALL CLEAR")
             restyle(self.next_tag, NOW)
             self.next_title.setText("No upcoming meetings")
-            self.next_detail.setText(
-                "Add a calendar URL to ~/.config/deskcal/config.toml"
-                if not self.cfg.calendars and not self.demo
-                else "Nothing on the calendar for the next week"
-            )
+            if not self.cfg.has_sources and not self.demo:
+                self.next_detail.setText("Add a calendar to ~/.config/deskcal/config.toml")
+            elif self.last_sync is None and not self.demo:
+                self.next_detail.setText("Waiting for the calendar (see status below)")
+            else:
+                self.next_detail.setText("Nothing on the calendar for the next week")
             self._style_card(NOW)
 
         # Later today (after the next one)
@@ -340,7 +344,7 @@ class MainWindow(QWidget):
             self.status.setText("demo mode")
             return
         if self.last_sync is None:
-            text = "syncing…" if not self.errors else "can't reach calendar: " + "; ".join(self.errors)
+            text = "syncing…" if not self.errors else "; ".join(self.errors)
         else:
             text = f"synced {schedule.fmt_time(self.last_sync.astimezone(), self.cfg.clock_24h)}"
             if self.errors:

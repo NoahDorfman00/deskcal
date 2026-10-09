@@ -12,6 +12,14 @@ calendars = [
   # { name = "Work", url = "https://calendar.google.com/calendar/ical/.../basic.ics" },
 ]
 
+# Google Calendar via sign-in (for work accounts that block iCal links).
+# Calendar IDs: "primary" is your own calendar; others are listed under
+# Google Calendar → Settings → (calendar) → Integrate calendar → Calendar ID.
+# One-time setup: see "Google Calendar sign-in" in README.md.
+google_calendars = [
+  # "primary",
+]
+
 # Your email address(es) on those calendars, so meetings you declined are hidden.
 my_emails = []
 

@@ -27,13 +27,44 @@ declined are skipped.
 
 ```bash
 ./install.sh                         # deps + config + start-at-boot service
-nano ~/.config/deskcal/config.toml   # add your secret iCal URL(s)
+nano ~/.config/deskcal/config.toml   # add iCal URL(s) and/or Google calendars
 systemctl --user restart deskcal
 ```
 
 Calendars are read from **secret iCal (ICS) URLs**, so no OAuth is needed. See
 `config.example.toml` for where to find the URL in Google, Outlook, or iCloud.
 The config lives outside the repo because those URLs are secrets.
+
+## Google Calendar sign-in (when iCal links are blocked)
+
+Reads your calendar through the Google Calendar API with read-only access
+(`calendar.readonly`). One-time setup:
+
+1. **Create an OAuth client.** At <https://console.cloud.google.com>, signed in
+   with your **work** account if your company lets you create projects (best:
+   an "Internal" app needs no Google review, and its sign-in doesn't expire):
+   - Create a project (e.g. "Desk Calendar").
+   - *APIs & Services → Library*: enable **Google Calendar API**.
+   - *Google Auth Platform / OAuth consent screen*: audience **Internal**
+     (work project), or **External** (personal project; then *Publish app*,
+     because in "Testing" mode Google expires the sign-in every 7 days).
+   - *Data access*: add scope `.../auth/calendar.readonly`.
+   - *Clients → Create client → Desktop app*, then download the JSON.
+2. **Copy it to the Pi** as `~/.config/deskcal/google_client.json`:
+   `scp client_secret_*.json tars@lil-ark.local:.config/deskcal/google_client.json`
+3. **Sign in.** From your laptop:
+   ```bash
+   ssh -L 8085:localhost:8085 tars@lil-ark.local
+   cd ~/deskcal && python3 -m deskcal --login
+   ```
+   Open the printed link in your laptop's browser and sign in with your work
+   account. Google redirects back to `localhost:8085`, which the tunnel carries
+   to the Pi. The token is saved to `~/.config/deskcal/google_token.json` and
+   the display restarts.
+
+Set `google_calendars = ["primary"]` in the config (add other calendar IDs if
+you want them too). If Google says the app is blocked, your Workspace admin
+needs to allow it.
 
 ## Running / developing
 
@@ -55,6 +86,7 @@ To try it on the Pi screen from SSH, stop the service first, then:
 | Path | |
 |---|---|
 | `deskcal/calendar_source.py` | download + parse ICS (recurrences, declines, video links), disk cache |
+| `deskcal/google_source.py` | Google Calendar API source + `--login` flow |
 | `deskcal/schedule.py` | pure logic: now/next, alert timing, time formatting |
 | `deskcal/ui.py` | PyQt5 fullscreen window and alert overlay |
 | `deskcal/sound.py` | generates the chimes and plays them via PipeWire |

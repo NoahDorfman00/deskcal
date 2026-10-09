@@ -127,9 +127,12 @@ def _download(url: str) -> bytes:
 
 
 def fetch_events(
-    calendars: list[dict], my_emails: set[str], now: datetime | None = None
+    calendars: list[dict],
+    my_emails: set[str],
+    google_calendars: list[str] = (),
+    now: datetime | None = None,
 ) -> tuple[list[Event], list[str]]:
-    """Fetch all calendars. Returns (events, error messages).
+    """Fetch all iCal feeds and Google calendars. Returns (events, error messages).
 
     If a download fails, the last successful copy from disk is used instead,
     so a network blip (or booting before Wi-Fi is up) doesn't blank the screen.
@@ -158,6 +161,13 @@ def fetch_events(
         except Exception as exc:
             log.exception("Parsing %s failed", name)
             errors.append(f"{name}: parse error ({exc.__class__.__name__})")
+
+    if google_calendars:
+        from . import google_source
+
+        g_events, g_errors = google_source.fetch(list(google_calendars), window_start, window_end)
+        events.extend(g_events)
+        errors.extend(g_errors)
 
     # Dedupe: the same meeting can appear on several subscribed calendars.
     unique = {(e.title, e.start, e.end): e for e in events}

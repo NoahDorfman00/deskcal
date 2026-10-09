@@ -10,12 +10,17 @@ DEFAULT_PATH = Path.home() / ".config" / "deskcal" / "config.toml"
 @dataclass
 class Config:
     calendars: list[dict] = field(default_factory=list)
+    google_calendars: list[str] = field(default_factory=list)
     my_emails: set[str] = field(default_factory=set)
     refresh_minutes: float = 5
     alert_minutes_before: list[int] = field(default_factory=lambda: [5])
     alert_at_start: bool = True
     volume: float = 0.8
     clock_24h: bool = False
+
+    @property
+    def has_sources(self) -> bool:
+        return bool(self.calendars or self.google_calendars)
 
     @property
     def alert_offsets(self) -> list[int]:

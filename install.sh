@@ -4,7 +4,8 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 sudo apt-get install -y python3-pyqt5 qtwayland5 python3-requests \
-  python3-icalendar python3-recurring-ical-events fonts-nunito-sans pipewire-bin || \
+  python3-icalendar python3-recurring-ical-events \
+  python3-google-auth python3-google-auth-oauthlib fonts-nunito-sans pipewire-bin || \
   echo "WARNING: apt reported errors (see above); continuing" >&2
 
 mkdir -p ~/.config/deskcal
