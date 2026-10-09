@@ -1,0 +1,29 @@
+# Desk Calendar config. Copy to ~/.config/deskcal/config.toml
+# (install.sh does this for you). Restart after editing:
+#   systemctl --user restart deskcal
+
+# One or more *secret iCal (ICS) URLs*. Treat these like passwords.
+#   Google Calendar: Settings → (your calendar) → Integrate calendar →
+#                    "Secret address in iCal format"
+#   Outlook/M365:    Settings → Calendar → Shared calendars → Publish a calendar
+#                    → "ICS" link
+#   iCloud:          Calendar app → share calendar → Public Calendar → copy link
+calendars = [
+  # { name = "Work", url = "https://calendar.google.com/calendar/ical/.../basic.ics" },
+]
+
+# Your email address(es) on those calendars, so meetings you declined are hidden.
+my_emails = []
+
+# How often to re-download the calendars.
+refresh_minutes = 5
+
+# Chime + flash the screen this many minutes before each meeting...
+alert_minutes_before = [5]
+# ...and again when it starts.
+alert_at_start = true
+
+# Chime volume, 0.0–1.0
+volume = 0.8
+
+clock_24h = false

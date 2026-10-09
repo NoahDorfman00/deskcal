@@ -1,0 +1,19 @@
+[Unit]
+Description=Desk Calendar display
+# Runs as a user service (linger is enabled, so it starts at boot).
+
+[Service]
+Type=simple
+WorkingDirectory=%h/deskcal
+Environment=QT_QPA_PLATFORM=wayland
+Environment=WAYLAND_DISPLAY=wayland-0
+Environment=PYTHONUNBUFFERED=1
+# Wait for the desktop (labwc) to come up after autologin.
+ExecStartPre=/bin/sh -c 'until [ -S "$XDG_RUNTIME_DIR/wayland-0" ]; do sleep 1; done'
+TimeoutStartSec=300
+ExecStart=/usr/bin/python3 -m deskcal
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
