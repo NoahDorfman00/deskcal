@@ -118,7 +118,8 @@ deskcal/
 │   └── deskcal.service       # Systemd user service
 ├── config.example.toml       # Settings template
 ├── .env.example              # Secrets template
-└── install.sh                # Installation script
+├── install.sh                # Installation script
+└── LICENSE                   # MIT license
 ```
 
 ### Key Files
@@ -183,3 +184,7 @@ XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY=wayland-0 QT_QPA_PLATFORM=wayland
 ### No sound
 - Run `python3 -m deskcal --test-sound`
 - Check the output device and volume in the desktop's audio settings
+
+## License
+
+[MIT](LICENSE)
