@@ -20,6 +20,13 @@ google_calendars = [
   # "primary",
 ]
 
+# Google Calendar via an Apps Script feed (for work accounts that block both
+# iCal links and third-party app sign-in). The URL is a secret, like the iCal
+# ones. One-time setup: see "Google Apps Script feed" in README.md.
+script_calendars = [
+  # { name = "Work", url = "https://script.google.com/macros/s/.../exec" },
+]
+
 # Your email address(es) on those calendars, so meetings you declined are hidden.
 my_emails = []
 

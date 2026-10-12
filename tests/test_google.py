@@ -1,5 +1,10 @@
+import json
+import tempfile
 import unittest
+from pathlib import Path
+from unittest import mock
 
+from deskcal import calendar_source
 from deskcal.google_source import parse_items
 
 ITEMS = [
@@ -40,6 +45,26 @@ class GoogleParseTests(unittest.TestCase):
         self.assertEqual(self.events["Vendor call"].video, "Zoom")
         self.assertEqual(self.events["Vendor call"].location, "")
         self.assertTrue(self.events["Offsite"].all_day)
+
+
+class ScriptFeedTests(unittest.TestCase):
+    CALS = [{"name": "Work", "url": "https://script.google.com/macros/s/x/exec"}]
+
+    def fetch(self, body):
+        with mock.patch.object(calendar_source, "_download", return_value=body):
+            return calendar_source.fetch_events([], set(), script_calendars=self.CALS)
+
+    def test_fetch_and_cache_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(calendar_source, "CACHE_DIR", Path(tmp)):
+            events, errors = self.fetch(json.dumps({"items": ITEMS}).encode())
+            self.assertEqual({e.title for e in events}, {"Standup", "Vendor call", "Offsite"})
+            self.assertEqual(errors, [])
+            self.assertEqual(events[0].calendar, "Work")
+
+            # A sign-in page instead of JSON: keep showing the last good copy.
+            events, errors = self.fetch(b"<html>Sign in</html>")
+            self.assertEqual(len(events), 3)
+            self.assertEqual(errors, ["Work: JSONDecodeError"])
 
 
 if __name__ == "__main__":

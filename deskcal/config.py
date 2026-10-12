@@ -11,6 +11,7 @@ DEFAULT_PATH = Path.home() / ".config" / "deskcal" / "config.toml"
 class Config:
     calendars: list[dict] = field(default_factory=list)
     google_calendars: list[str] = field(default_factory=list)
+    script_calendars: list[dict] = field(default_factory=list)
     my_emails: set[str] = field(default_factory=set)
     refresh_minutes: float = 5
     alert_minutes_before: list[int] = field(default_factory=lambda: [5])
@@ -20,7 +21,7 @@ class Config:
 
     @property
     def has_sources(self) -> bool:
-        return bool(self.calendars or self.google_calendars)
+        return bool(self.calendars or self.google_calendars or self.script_calendars)
 
     @property
     def alert_offsets(self) -> list[int]:

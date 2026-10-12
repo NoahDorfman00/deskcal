@@ -79,7 +79,10 @@ class Fetcher(QObject):
     def _run(self) -> None:
         try:
             events, errors = fetch_events(
-                self.cfg.calendars, self.cfg.my_emails, self.cfg.google_calendars
+                self.cfg.calendars,
+                self.cfg.my_emails,
+                self.cfg.google_calendars,
+                self.cfg.script_calendars,
             )
         except Exception as exc:  # never let the thread die silently
             log.exception("Fetch failed")

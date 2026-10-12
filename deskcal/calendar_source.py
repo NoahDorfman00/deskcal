@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import re
 from dataclasses import dataclass
@@ -113,8 +114,8 @@ def parse_ics(
     return events
 
 
-def _cache_path(url: str) -> Path:
-    return CACHE_DIR / (hashlib.sha256(url.encode()).hexdigest()[:16] + ".ics")
+def _cache_path(url: str, suffix: str = ".ics") -> Path:
+    return CACHE_DIR / (hashlib.sha256(url.encode()).hexdigest()[:16] + suffix)
 
 
 def _download(url: str) -> bytes:
@@ -130,9 +131,12 @@ def fetch_events(
     calendars: list[dict],
     my_emails: set[str],
     google_calendars: list[str] = (),
+    script_calendars: list[dict] = (),
     now: datetime | None = None,
 ) -> tuple[list[Event], list[str]]:
-    """Fetch all iCal feeds and Google calendars. Returns (events, error messages).
+    """Fetch all iCal feeds, Apps Script feeds and Google calendars.
+
+    Returns (events, error messages).
 
     If a download fails, the last successful copy from disk is used instead,
     so a network blip (or booting before Wi-Fi is up) doesn't blank the screen.
@@ -161,6 +165,26 @@ def fetch_events(
         except Exception as exc:
             log.exception("Parsing %s failed", name)
             errors.append(f"{name}: parse error ({exc.__class__.__name__})")
+
+    if script_calendars:
+        from .google_source import parse_items
+
+    for cal in script_calendars:
+        name, url = cal.get("name", "Calendar"), cal["url"]
+        cache = _cache_path(url, ".json")
+        items = None
+        try:
+            # A broken deployment answers with an HTML page, not JSON, so
+            # parse before overwriting the cache.
+            items = json.loads(_download(url))["items"]
+            cache.write_text(json.dumps(items))
+        except Exception as exc:
+            log.warning("Fetching %s failed: %s", name, exc)
+            errors.append(f"{name}: {exc.__class__.__name__}")
+            if cache.exists():
+                items = json.loads(cache.read_text())
+        if items is not None:
+            events.extend(parse_items(items, name))
 
     if google_calendars:
         from . import google_source

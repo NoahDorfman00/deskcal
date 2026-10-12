@@ -27,7 +27,7 @@ declined are skipped.
 
 ```bash
 ./install.sh                         # deps + config + start-at-boot service
-nano ~/.config/deskcal/config.toml   # add iCal URL(s) and/or Google calendars
+nano ~/.config/deskcal/config.toml   # add iCal URL(s), Google calendars or a script feed
 systemctl --user restart deskcal
 ```
 
@@ -66,6 +66,25 @@ Set `google_calendars = ["primary"]` in the config (add other calendar IDs if
 you want them too). If Google says the app is blocked, your Workspace admin
 needs to allow it.
 
+## Google Apps Script feed (when sign-in is blocked too)
+
+If your Workspace admin blocks third-party apps, a small script inside your own
+Google account can publish your upcoming events for the Pi to poll. One-time
+setup, signed in with your **work** account:
+
+1. At <https://script.google.com>, create a **New project** and replace the
+   contents of `Code.gs` with [`apps_script/Code.gs`](apps_script/Code.gs).
+2. *Services* (left sidebar) → **+** → **Google Calendar API** → *Add*.
+3. *Deploy → New deployment → Web app*, with **Execute as: Me** and
+   **Who has access: Anyone**. Approve the calendar permission prompt.
+4. Copy the **Web app URL** (ends in `/exec`) into the config:
+   `script_calendars = [{ name = "Work", url = "https://script.google.com/macros/s/.../exec" }]`
+
+Anyone with that URL can read your next week of meetings, so treat it like a
+password. To revoke it, *Deploy → Manage deployments → Archive*. After editing
+the script, publish a new version under *Manage deployments* (the URL stays the
+same).
+
 ## Running / developing
 
 ```bash
@@ -89,6 +108,7 @@ To try it on the Pi screen from SSH, stop the service first, then:
 | `deskcal/google_source.py` | Google Calendar API source + `--login` flow |
 | `deskcal/schedule.py` | pure logic: now/next, alert timing, time formatting |
 | `deskcal/ui.py` | PyQt5 fullscreen window and alert overlay |
+| `apps_script/Code.gs` | Apps Script web app that serves events as JSON (`script_calendars`) |
 | `deskcal/sound.py` | generates the chimes and plays them via PipeWire |
 | `systemd/deskcal.service` | user service (symlinked into `~/.config/systemd/user`) |
 
