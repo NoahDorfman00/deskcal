@@ -2,83 +2,12 @@ import unittest
 from datetime import datetime, timedelta, timezone
 
 from deskcal import schedule
-from deskcal.calendar_source import Event, parse_ics
+from deskcal.calendar_source import Event
 
 UTC = timezone.utc
 
-ICS = """BEGIN:VCALENDAR
-VERSION:2.0
-PRODID:test
-BEGIN:VEVENT
-UID:standup
-SUMMARY:Standup
-DTSTART:20261012T140000Z
-DTEND:20261012T141500Z
-RRULE:FREQ=DAILY;COUNT=5
-LOCATION:https://acme.zoom.us/j/123
-END:VEVENT
-BEGIN:VEVENT
-UID:declined
-SUMMARY:Declined thing
-DTSTART:20261012T150000Z
-DTEND:20261012T160000Z
-ATTENDEE;PARTSTAT=DECLINED:mailto:me@example.com
-END:VEVENT
-BEGIN:VEVENT
-UID:cancelled
-SUMMARY:Cancelled thing
-STATUS:CANCELLED
-DTSTART:20261012T160000Z
-DTEND:20261012T170000Z
-END:VEVENT
-BEGIN:VEVENT
-UID:allday
-SUMMARY:Holiday
-DTSTART;VALUE=DATE:20261013
-DTEND;VALUE=DATE:20261014
-END:VEVENT
-BEGIN:VEVENT
-UID:review
-SUMMARY:Review
-DTSTART:20261012T180000Z
-DURATION:PT30M
-DESCRIPTION:Join https://meet.google.com/abc-defg-hij
-END:VEVENT
-END:VCALENDAR
-"""
-
-
 def ev(uid, start, minutes=30, **kw):
     return Event(uid, uid, start, start + timedelta(minutes=minutes), **kw)
-
-
-class ParseTests(unittest.TestCase):
-    def setUp(self):
-        start = datetime(2026, 10, 12, tzinfo=UTC)
-        self.events = parse_ics(ICS, "Work", start, start + timedelta(days=7), {"me@example.com"})
-
-    def test_expands_recurrences_and_filters(self):
-        titles = [e.title for e in self.events]
-        self.assertEqual(titles.count("Standup"), 5)
-        self.assertNotIn("Declined thing", titles)
-        self.assertNotIn("Cancelled thing", titles)
-
-    def test_video_and_location(self):
-        standup = next(e for e in self.events if e.title == "Standup")
-        self.assertEqual(standup.video, "Zoom")
-        self.assertEqual(standup.location, "")  # raw URL hidden
-        review = next(e for e in self.events if e.title == "Review")
-        self.assertEqual(review.video, "Meet")
-        self.assertEqual(review.end - review.start, timedelta(minutes=30))
-
-    def test_all_day(self):
-        holiday = next(e for e in self.events if e.title == "Holiday")
-        self.assertTrue(holiday.all_day)
-        self.assertIsNotNone(holiday.start.tzinfo)
-
-    def test_recurrences_have_distinct_keys(self):
-        keys = {e.key for e in self.events if e.title == "Standup"}
-        self.assertEqual(len(keys), 5)
 
 
 class AlertTests(unittest.TestCase):

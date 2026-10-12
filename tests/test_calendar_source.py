@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest import mock
 
 from deskcal import calendar_source
-from deskcal.google_source import parse_items
+from deskcal.calendar_source import parse_items
 
 ITEMS = [
     {
@@ -30,7 +30,7 @@ ITEMS = [
 ]
 
 
-class GoogleParseTests(unittest.TestCase):
+class ParseTests(unittest.TestCase):
     def setUp(self):
         self.events = {e.title: e for e in parse_items(ITEMS, "primary")}
 
@@ -45,6 +45,15 @@ class GoogleParseTests(unittest.TestCase):
         self.assertEqual(self.events["Vendor call"].video, "Zoom")
         self.assertEqual(self.events["Vendor call"].location, "")
         self.assertTrue(self.events["Offsite"].all_day)
+        self.assertIsNotNone(self.events["Offsite"].start.tzinfo)
+
+    def test_video_link_in_description(self):
+        item = dict(ITEMS[5], description="https://teams.microsoft.com/l/meetup-join/1")
+        self.assertEqual(parse_items([item], "Work")[0].video, "Teams")
+
+    def test_recurrences_have_distinct_keys(self):
+        days = [dict(ITEMS[0], start={"dateTime": f"2026-10-{d}T10:00:00-04:00"}) for d in (12, 13, 14)]
+        self.assertEqual(len({e.key for e in parse_items(days, "Work")}), 3)
 
 
 class ScriptFeedTests(unittest.TestCase):
@@ -52,7 +61,7 @@ class ScriptFeedTests(unittest.TestCase):
 
     def fetch(self, body):
         with mock.patch.object(calendar_source, "_download", return_value=body):
-            return calendar_source.fetch_events([], set(), script_calendars=self.CALS)
+            return calendar_source.fetch_events(self.CALS)
 
     def test_fetch_and_cache_fallback(self):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(calendar_source, "CACHE_DIR", Path(tmp)):

@@ -1,116 +1,185 @@
 # Desk Calendar
 
-A fullscreen "what's my next meeting" display for a Raspberry Pi with a
-small touchscreen (800×480) and speakers. It chimes and flashes the screen
-before each meeting starts.
+A "what's my next meeting" desk display for a Raspberry Pi touchscreen - shows what's on now and next, and chimes before each meeting starts.
 
-![layout](docs/screenshot.png)
+![Desk Calendar showing the current and next meeting](docs/screenshot.png)
 
-## What it shows
+## Overview
 
-- **Clock and date**
-- **NOW**: the meeting you're in, and how much time is left
-- **NEXT**: the next meeting, with a countdown. The accent color changes as it
-  gets close: blue (>15 min), amber (≤15), red (≤5)
-- **Later today**: the next couple of meetings after that
-- **Sync status**: turns amber with "offline" if the calendar can't be reached
-  (the last downloaded copy keeps being used)
+Desk Calendar is a native PyQt5 fullscreen app for a small Raspberry Pi touchscreen (800×480) with speakers. It sits on a desk, shows the meeting you're in and the one coming up, and flashes the screen with a chime a few minutes before each meeting starts.
 
-**Alerts**: the screen flashes and a chime plays N minutes before each meeting
-(default 5) and again when it starts. Tap to dismiss. Alerts auto-dismiss after 3 min.
-Tap the main screen to force a sync.
+It reads a Google Calendar without an OAuth app. Work accounts often block third-party apps, secret iCal links and external sharing, so the calendar is published by a small Google Apps Script that runs inside the account itself, and the Pi simply polls it over HTTPS.
 
-All-day events, cancelled events, and (if `my_emails` is set) meetings you
-declined are skipped.
+## Architecture
 
-## Setup
-
-```bash
-./install.sh                         # deps + config + start-at-boot service
-nano ~/.config/deskcal/config.toml   # add iCal URL(s), Google calendars or a script feed
-systemctl --user restart deskcal
+```
+┌─────────────────────────────────────┐
+│  Google account                     │
+│  └── Apps Script web app (Code.gs)  │
+│      └── Calendar API (as you)      │
+└──────────────────┬──────────────────┘
+                   │ HTTPS, JSON, polled every 5 min
+┌──────────────────▼──────────────────┐
+│  Raspberry Pi (Python/PyQt5)        │
+│  ├── calendar_source  fetch + cache │
+│  ├── schedule         now/next/alert│
+│  ├── ui               fullscreen    │
+│  └── sound            chimes        │
+└─────────────────────────────────────┘
 ```
 
-Calendars are read from **secret iCal (ICS) URLs**, so no OAuth is needed. See
-`config.example.toml` for where to find the URL in Google, Outlook, or iCloud.
-The config lives outside the repo because those URLs are secrets.
+## Features
 
-## Google Calendar sign-in (when iCal links are blocked)
+- **Now / Next / Later today** - the meeting you're in with time remaining, the next one with a countdown, and the couple after that
+- **Urgency colors** - the next-meeting card goes from blue (more than 15 min away) to amber (15 min or less) to red (5 min or less)
+- **Alerts** - the screen flashes and a chime plays N minutes before each meeting (default 5) and again when it starts; tap to dismiss, or it clears itself after 3 minutes
+- **Video badges** - Meet, Zoom, Teams and Webex meetings are labeled
+- **Noise filtering** - all-day events, cancelled events, working-location and out-of-office entries, and meetings you declined are skipped
+- **Offline tolerant** - the last downloaded copy is kept on disk, so a network blip (or booting before Wi-Fi is up) doesn't blank the screen; the sync status turns amber instead
+- **Minimal data exposure** - the feed sends only the fields the display uses, and no attendee names or emails
+- **Starts at boot** - runs as a systemd user service and restarts itself if it crashes
 
-Reads your calendar through the Google Calendar API with read-only access
-(`calendar.readonly`). One-time setup:
+## Installation
 
-1. **Create an OAuth client.** At <https://console.cloud.google.com>, signed in
-   with your **work** account if your company lets you create projects (best:
-   an "Internal" app needs no Google review, and its sign-in doesn't expire):
-   - Create a project (e.g. "Desk Calendar").
-   - *APIs & Services → Library*: enable **Google Calendar API**.
-   - *Google Auth Platform / OAuth consent screen*: audience **Internal**
-     (work project), or **External** (personal project; then *Publish app*,
-     because in "Testing" mode Google expires the sign-in every 7 days).
-   - *Data access*: add scope `.../auth/calendar.readonly`.
-   - *Clients → Create client → Desktop app*, then download the JSON.
-2. **Copy it to the Pi** as `~/.config/deskcal/google_client.json`:
-   `scp client_secret_*.json tars@lil-ark.local:.config/deskcal/google_client.json`
-3. **Sign in.** From your laptop:
-   ```bash
-   ssh -L 8085:localhost:8085 tars@lil-ark.local
-   cd ~/deskcal && python3 -m deskcal --login
-   ```
-   Open the printed link in your laptop's browser and sign in with your work
-   account. Google redirects back to `localhost:8085`, which the tunnel carries
-   to the Pi. The token is saved to `~/.config/deskcal/google_token.json` and
-   the display restarts.
+### Prerequisites
 
-Set `google_calendars = ["primary"]` in the config (add other calendar IDs if
-you want them too). If Google says the app is blocked, your Workspace admin
-needs to allow it.
+- Raspberry Pi with a display (built on a Pi 5 with an 800×480 touchscreen), running Raspberry Pi OS with the Wayland desktop
+- Speakers or an audio HAT for the chimes
+- Python 3.11+
+- A Google account whose calendar you want to show
 
-## Google Apps Script feed (when sign-in is blocked too)
+### Install
 
-If your Workspace admin blocks third-party apps, a small script inside your own
-Google account can publish your upcoming events for the Pi to poll. One-time
-setup, signed in with your **work** account:
+```bash
+git clone https://github.com/NoahDorfman00/deskcal.git ~/deskcal
+cd ~/deskcal
+./install.sh
+```
 
-1. At <https://script.google.com>, create a **New project** and replace the
-   contents of `Code.gs` with [`apps_script/Code.gs`](apps_script/Code.gs).
+This installs the dependencies, creates `~/.config/deskcal/config.toml` and `~/.config/deskcal/.env`, and enables the start-at-boot service.
+
+### Calendar Feed
+
+One-time setup, signed in with the Google account whose calendar you want:
+
+1. At <https://script.google.com>, create a **New project** and replace the contents of `Code.gs` with [`apps_script/Code.gs`](apps_script/Code.gs).
 2. *Services* (left sidebar) → **+** → **Google Calendar API** → *Add*.
-3. *Deploy → New deployment → Web app*, with **Execute as: Me** and
-   **Who has access: Anyone**. Approve the calendar permission prompt.
-4. Copy the **Web app URL** (ends in `/exec`) into the config:
-   `script_calendars = [{ name = "Work", url = "https://script.google.com/macros/s/.../exec" }]`
+3. *Deploy → New deployment → Web app*, with **Execute as: Me** and **Who has access: Anyone**. Approve the calendar permission prompt.
+4. Put the **Web app URL** (ends in `/exec`) in `~/.config/deskcal/.env`:
+   ```
+   DESKCAL_WORK_FEED_URL=https://script.google.com/macros/s/.../exec
+   ```
+5. Restart the display: `systemctl --user restart deskcal`
 
-Anyone with that URL can read your next week of meetings, so treat it like a
-password. To revoke it, *Deploy → Manage deployments → Archive*. After editing
-the script, publish a new version under *Manage deployments* (the URL stays the
-same).
+Anyone with that URL can read your next week of meetings, so treat it like a password. To revoke it, *Deploy → Manage deployments → Archive*. After editing the script, publish a new version under *Manage deployments* (the URL stays the same).
 
-## Running / developing
+### Manual Test
 
 ```bash
 python3 -m deskcal --demo --windowed   # fake schedule in a window
 python3 -m deskcal --test-sound        # play both chimes
-python3 -m unittest                    # tests
+```
 
+## Configuration
+
+Settings live in `~/.config/deskcal/config.toml`; secrets live next to it in `.env` (kept `chmod 600`) and are referenced by name:
+
+```toml
+calendars = [
+  { name = "Work", url = "${DESKCAL_WORK_FEED_URL}" },
+]
+
+refresh_minutes = 5          # how often to re-download the calendars
+alert_minutes_before = [5]   # chime this many minutes before each meeting
+alert_at_start = true        # ...and again when it starts
+volume = 0.8                 # chime volume, 0.0-1.0
+clock_24h = false
+```
+
+Add one feed per Google account to show several calendars; a meeting that appears on more than one is shown once.
+
+## Development
+
+### Project Structure
+
+```
+deskcal/
+├── apps_script/
+│   └── Code.gs               # Apps Script web app (the calendar feed)
+├── deskcal/
+│   ├── __main__.py           # Entry point and CLI flags
+│   ├── calendar_source.py    # Feed download, parsing, disk cache
+│   ├── schedule.py           # Now/next, alert timing, time formatting
+│   ├── ui.py                 # PyQt5 window and alert overlay
+│   ├── sound.py              # Chime generation and playback
+│   └── config.py             # config.toml and .env loading
+├── tests/                    # Unit tests
+├── systemd/
+│   └── deskcal.service       # Systemd user service
+├── config.example.toml       # Settings template
+├── .env.example              # Secrets template
+└── install.sh                # Installation script
+```
+
+### Key Files
+
+- **`apps_script/Code.gs`** - The calendar feed
+  - Runs inside your Google account as a web app
+  - Returns the next 8 days of events as JSON
+  - Strips descriptions down to their links
+
+- **`deskcal/calendar_source.py`** - Fetching
+  - Downloads and parses each feed
+  - Filters declined, cancelled and non-meeting entries
+  - Falls back to the cached copy when offline
+
+- **`deskcal/schedule.py`** - Scheduling logic
+  - Pure functions, no I/O
+  - Decides what is on now, what is next and which alert is due
+
+- **`deskcal/ui.py`** - Display
+  - Fullscreen PyQt5 window
+  - Pulsing alert overlay, tap to dismiss
+
+### Tests
+
+```bash
+python3 -m unittest
+```
+
+## Usage
+
+Once installed and configured, the display starts at boot and keeps itself in sync.
+
+- Tap the main screen to force a sync
+- Tap an alert to dismiss it
+
+```bash
 systemctl --user status deskcal        # service
 journalctl --user -u deskcal -f        # logs
 systemctl --user restart deskcal       # pick up code/config changes
 ```
 
-To try it on the Pi screen from SSH, stop the service first, then:
-`XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY=wayland-0 QT_QPA_PLATFORM=wayland python3 -m deskcal --demo`
+To run it on the Pi screen from SSH, stop the service first, then:
 
-## Layout
+```bash
+XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY=wayland-0 QT_QPA_PLATFORM=wayland python3 -m deskcal --demo
+```
 
-| Path | |
-|---|---|
-| `deskcal/calendar_source.py` | download + parse ICS (recurrences, declines, video links), disk cache |
-| `deskcal/google_source.py` | Google Calendar API source + `--login` flow |
-| `deskcal/schedule.py` | pure logic: now/next, alert timing, time formatting |
-| `deskcal/ui.py` | PyQt5 fullscreen window and alert overlay |
-| `apps_script/Code.gs` | Apps Script web app that serves events as JSON (`script_calendars`) |
-| `deskcal/sound.py` | generates the chimes and plays them via PipeWire |
-| `systemd/deskcal.service` | user service (symlinked into `~/.config/systemd/user`) |
+## Troubleshooting
 
-The service runs as a *user* unit (linger is enabled), waits for the labwc
-Wayland socket, and restarts automatically if it crashes.
+### "Add a calendar to ~/.config/deskcal/config.toml"
+- No feed is configured: add an entry under `calendars` and its URL in `.env`
+
+### Sync status is amber / "offline"
+- Check the network, then open the feed URL in a browser: it should show JSON
+- If it shows a Google sign-in page, the deployment's access isn't set to **Anyone**
+- If it shows a script error, check that the **Google Calendar API** service is added
+
+### The app won't start after a config change
+- Check the logs: `journalctl --user -u deskcal -f`
+- A `${NAME}` used in `config.toml` must be set in `.env`
+
+### No sound
+- Run `python3 -m deskcal --test-sound`
+- Check the output device and volume in the desktop's audio settings

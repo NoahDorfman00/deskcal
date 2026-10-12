@@ -1,7 +1,7 @@
 /**
  * Desk Calendar feed: serves your upcoming events as JSON for the Pi to poll.
  * Runs inside your Google account, so no third-party app approval is needed.
- * Setup: see "Google Apps Script feed" in README.md.
+ * Setup: see "Calendar feed" in README.md.
  */
 
 const CALENDAR_ID = 'primary';

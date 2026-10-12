@@ -1,4 +1,8 @@
-"""Fetch iCal feeds and turn them into a flat, sorted list of events."""
+"""Fetch Apps Script calendar feeds and turn them into a flat, sorted list of events.
+
+A feed is the web app in apps_script/Code.gs: it returns {"items": [...]},
+where each item is a Google Calendar API event resource.
+"""
 
 from __future__ import annotations
 
@@ -10,8 +14,6 @@ from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
-import icalendar
-import recurring_ical_events
 import requests
 
 log = logging.getLogger(__name__)
@@ -24,6 +26,9 @@ VIDEO_PATTERNS = [
     ("Teams", re.compile(r"https://teams\.microsoft\.com/[^\s<>\"']+")),
     ("Webex", re.compile(r"https://[\w.-]*webex\.com/[^\s<>\"']+")),
 ]
+
+# Calendar entries that aren't meetings.
+SKIP_TYPES = {"workingLocation", "outOfOffice"}
 
 
 @dataclass(frozen=True)
@@ -43,107 +48,69 @@ class Event:
         return f"{self.uid}@{self.start.isoformat()}"
 
 
-def _to_local(value: date | datetime) -> tuple[datetime, bool]:
+def _when(field: dict) -> tuple[datetime, bool]:
     """Return (aware local datetime, is_all_day)."""
-    if not isinstance(value, datetime):
-        return datetime.combine(value, time()).astimezone(), True
-    if value.tzinfo is None:  # "floating" time: treat as local
-        return value.astimezone(), False
-    return value.astimezone(), False
+    if "dateTime" in field:
+        return datetime.fromisoformat(field["dateTime"]).astimezone(), False
+    return datetime.combine(date.fromisoformat(field["date"]), time()).astimezone(), True
 
 
-def _declined(component, my_emails: set[str]) -> bool:
-    if not my_emails:
-        return False
-    attendees = component.get("ATTENDEE", [])
-    if not isinstance(attendees, list):
-        attendees = [attendees]
-    for att in attendees:
-        email = str(att).lower().removeprefix("mailto:")
-        if email in my_emails and str(att.params.get("PARTSTAT", "")).upper() == "DECLINED":
-            return True
-    return False
-
-
-def _detect_video(component) -> str:
-    text = " ".join(
-        str(component.get(field, ""))
-        for field in ("LOCATION", "DESCRIPTION", "URL", "X-GOOGLE-CONFERENCE")
-    )
+def _video(item: dict) -> str:
+    if item.get("hangoutLink"):
+        return "Meet"
+    solution = item.get("conferenceData", {}).get("conferenceSolution", {}).get("name", "")
+    for name, _ in VIDEO_PATTERNS:
+        if name.lower() in solution.lower():
+            return name
+    text = " ".join(str(item.get(k, "")) for k in ("location", "description"))
     for name, pattern in VIDEO_PATTERNS:
         if pattern.search(text):
             return name
     return ""
 
 
-def parse_ics(
-    data: bytes | str,
-    calendar_name: str,
-    window_start: datetime,
-    window_end: datetime,
-    my_emails: set[str] = frozenset(),
-) -> list[Event]:
-    cal = icalendar.Calendar.from_ical(data)
+def parse_items(items: list[dict], calendar_name: str) -> list[Event]:
     events = []
-    for comp in recurring_ical_events.of(cal).between(window_start, window_end):
-        if str(comp.get("STATUS", "")).upper() == "CANCELLED":
+    for item in items:
+        if item.get("status") == "cancelled" or item.get("eventType") in SKIP_TYPES:
             continue
-        if _declined(comp, my_emails):
+        if any(a.get("self") and a.get("responseStatus") == "declined" for a in item.get("attendees", [])):
             continue
-        start, all_day = _to_local(comp.decoded("DTSTART"))
-        if "DTEND" in comp:
-            end, _ = _to_local(comp.decoded("DTEND"))
-        elif "DURATION" in comp:
-            end = start + comp.decoded("DURATION")
-        else:
-            end = start + (timedelta(days=1) if all_day else timedelta(0))
-        location = str(comp.get("LOCATION", "")).strip()
+        start, all_day = _when(item["start"])
+        end, _ = _when(item["end"])
+        location = item.get("location", "").strip()
         events.append(
             Event(
-                uid=str(comp.get("UID", "")),
-                title=str(comp.get("SUMMARY", "")).strip() or "(No title)",
+                uid=item.get("iCalUID") or item.get("id", ""),
+                title=item.get("summary", "").strip() or "(No title)",
                 start=start,
                 end=end,
                 all_day=all_day,
                 # Hide raw meeting URLs in the location; the video badge covers it.
-                location="" if location.startswith("http") else location,
+                location="" if re.match(r"https?://", location) else location,
                 calendar=calendar_name,
-                video=_detect_video(comp),
+                video=_video(item),
             )
         )
     return events
 
 
-def _cache_path(url: str, suffix: str = ".ics") -> Path:
-    return CACHE_DIR / (hashlib.sha256(url.encode()).hexdigest()[:16] + suffix)
+def _cache_path(url: str) -> Path:
+    return CACHE_DIR / (hashlib.sha256(url.encode()).hexdigest()[:16] + ".json")
 
 
 def _download(url: str) -> bytes:
-    # Google/Outlook hand out webcal:// links; they're plain https underneath.
-    if url.startswith("webcal://"):
-        url = "https://" + url[len("webcal://"):]
     resp = requests.get(url, timeout=20)
     resp.raise_for_status()
     return resp.content
 
 
-def fetch_events(
-    calendars: list[dict],
-    my_emails: set[str],
-    google_calendars: list[str] = (),
-    script_calendars: list[dict] = (),
-    now: datetime | None = None,
-) -> tuple[list[Event], list[str]]:
-    """Fetch all iCal feeds, Apps Script feeds and Google calendars.
-
-    Returns (events, error messages).
+def fetch_events(calendars: list[dict]) -> tuple[list[Event], list[str]]:
+    """Fetch all feeds. Returns (events, error messages).
 
     If a download fails, the last successful copy from disk is used instead,
     so a network blip (or booting before Wi-Fi is up) doesn't blank the screen.
     """
-    now = now or datetime.now().astimezone()
-    window_start = now - timedelta(days=1)
-    window_end = now + timedelta(days=8)
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
     events: list[Event] = []
@@ -151,27 +118,6 @@ def fetch_events(
     for cal in calendars:
         name, url = cal.get("name", "Calendar"), cal["url"]
         cache = _cache_path(url)
-        try:
-            data = _download(url)
-            cache.write_bytes(data)
-        except Exception as exc:
-            log.warning("Fetching %s failed: %s", name, exc)
-            errors.append(f"{name}: {exc.__class__.__name__}")
-            if not cache.exists():
-                continue
-            data = cache.read_bytes()
-        try:
-            events.extend(parse_ics(data, name, window_start, window_end, my_emails))
-        except Exception as exc:
-            log.exception("Parsing %s failed", name)
-            errors.append(f"{name}: parse error ({exc.__class__.__name__})")
-
-    if script_calendars:
-        from .google_source import parse_items
-
-    for cal in script_calendars:
-        name, url = cal.get("name", "Calendar"), cal["url"]
-        cache = _cache_path(url, ".json")
         items = None
         try:
             # A broken deployment answers with an HTML page, not JSON, so
@@ -186,14 +132,7 @@ def fetch_events(
         if items is not None:
             events.extend(parse_items(items, name))
 
-    if google_calendars:
-        from . import google_source
-
-        g_events, g_errors = google_source.fetch(list(google_calendars), window_start, window_end)
-        events.extend(g_events)
-        errors.extend(g_errors)
-
-    # Dedupe: the same meeting can appear on several subscribed calendars.
+    # Dedupe: the same meeting can appear on several calendars.
     unique = {(e.title, e.start, e.end): e for e in events}
     return sorted(unique.values(), key=lambda e: (e.start, e.end)), errors
 

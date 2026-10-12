@@ -78,12 +78,7 @@ class Fetcher(QObject):
 
     def _run(self) -> None:
         try:
-            events, errors = fetch_events(
-                self.cfg.calendars,
-                self.cfg.my_emails,
-                self.cfg.google_calendars,
-                self.cfg.script_calendars,
-            )
+            events, errors = fetch_events(self.cfg.calendars)
         except Exception as exc:  # never let the thread die silently
             log.exception("Fetch failed")
             events, errors = None, [str(exc)]
@@ -311,7 +306,7 @@ class MainWindow(QWidget):
             self.next_tag.setText("ALL CLEAR")
             restyle(self.next_tag, NOW)
             self.next_title.setText("No upcoming meetings")
-            if not self.cfg.has_sources and not self.demo:
+            if not self.cfg.calendars and not self.demo:
                 self.next_detail.setText("Add a calendar to ~/.config/deskcal/config.toml")
             elif self.last_sync is None and not self.demo:
                 self.next_detail.setText("Waiting for the calendar (see status below)")

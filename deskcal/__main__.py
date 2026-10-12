@@ -1,11 +1,10 @@
-"""Entry point: python3 -m deskcal [--demo] [--windowed] [--test-sound] [--login]."""
+"""Entry point: python3 -m deskcal [--demo] [--windowed] [--test-sound]."""
 
 from __future__ import annotations
 
 import argparse
 import logging
 import signal
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -19,18 +18,10 @@ def main() -> int:
     parser.add_argument("--demo", action="store_true", help="show a fake schedule")
     parser.add_argument("--windowed", action="store_true", help="don't go fullscreen")
     parser.add_argument("--test-sound", action="store_true", help="play both chimes and exit")
-    parser.add_argument("--login", action="store_true", help="sign in to Google Calendar")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     cfg = config.load(args.config)
-
-    if args.login:
-        from . import google_source
-
-        google_source.login()
-        subprocess.run(["systemctl", "--user", "restart", "deskcal"], check=False)
-        return 0
 
     if args.test_sound:
         sound.play("soon", cfg.volume)

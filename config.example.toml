@@ -2,33 +2,13 @@
 # (install.sh does this for you). Restart after editing:
 #   systemctl --user restart deskcal
 
-# One or more *secret iCal (ICS) URLs*. Treat these like passwords.
-#   Google Calendar: Settings → (your calendar) → Integrate calendar →
-#                    "Secret address in iCal format"
-#   Outlook/M365:    Settings → Calendar → Shared calendars → Publish a calendar
-#                    → "ICS" link
-#   iCloud:          Calendar app → share calendar → Public Calendar → copy link
+# Calendar feeds: the Apps Script web app from apps_script/Code.gs, one per
+# Google account. One-time setup: see "Calendar feed" in README.md.
+# The URLs are secrets, so keep them out of this file: put them in
+# ~/.config/deskcal/.env (see .env.example) and refer to them as "${NAME}".
 calendars = [
-  # { name = "Work", url = "https://calendar.google.com/calendar/ical/.../basic.ics" },
+  # { name = "Work", url = "${DESKCAL_WORK_FEED_URL}" },
 ]
-
-# Google Calendar via sign-in (for work accounts that block iCal links).
-# Calendar IDs: "primary" is your own calendar; others are listed under
-# Google Calendar → Settings → (calendar) → Integrate calendar → Calendar ID.
-# One-time setup: see "Google Calendar sign-in" in README.md.
-google_calendars = [
-  # "primary",
-]
-
-# Google Calendar via an Apps Script feed (for work accounts that block both
-# iCal links and third-party app sign-in). The URL is a secret, like the iCal
-# ones. One-time setup: see "Google Apps Script feed" in README.md.
-script_calendars = [
-  # { name = "Work", url = "https://script.google.com/macros/s/.../exec" },
-]
-
-# Your email address(es) on those calendars, so meetings you declined are hidden.
-my_emails = []
 
 # How often to re-download the calendars.
 refresh_minutes = 5

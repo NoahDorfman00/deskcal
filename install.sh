@@ -4,14 +4,14 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 sudo apt-get install -y python3-pyqt5 qtwayland5 python3-requests \
-  python3-icalendar python3-recurring-ical-events \
-  python3-google-auth python3-google-auth-oauthlib fonts-nunito-sans pipewire-bin || \
+  fonts-nunito-sans pipewire-bin || \
   echo "WARNING: apt reported errors (see above); continuing" >&2
 
 mkdir -p ~/.config/deskcal
 if [ ! -f ~/.config/deskcal/config.toml ]; then
   cp config.example.toml ~/.config/deskcal/config.toml
-  echo "Created ~/.config/deskcal/config.toml (add your calendar URL there)"
+  install -m 600 .env.example ~/.config/deskcal/.env
+  echo "Created ~/.config/deskcal/config.toml and .env (add your feed URL to .env)"
 fi
 
 if [ "$(pwd)" != "$HOME/deskcal" ]; then
