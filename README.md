@@ -118,6 +118,8 @@ deskcal/
 │   ├── fonts/                # Chakra Petch (SIL Open Font License)
 │   ├── sound.py              # Chime generation and playback
 │   └── config.py             # config.toml and .env loading
+├── hardware/
+│   └── stand/                # 3D-printable stand (OpenSCAD)
 ├── tests/                    # Unit tests
 ├── systemd/
 │   └── deskcal.service       # Systemd user service
@@ -171,6 +173,28 @@ To run it on the Pi screen from SSH, stop the service first, then:
 ```bash
 XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY=wayland-0 QT_QPA_PLATFORM=wayland python3 -m deskcal --demo
 ```
+
+## Stand
+
+The Pi, screen, audio HAT and speakers slot into a 3D-printed stand shaped like a mini oscilloscope, to go with the logic analyzer display.
+
+![The stand, with the screen in the middle of an oscilloscope front panel](hardware/stand/preview.png)
+
+- **Slot-in fit** - the screen and Pi tilt in from the back and drop onto a shelf; nothing is screwed down
+- **Speakers** - they stand on end behind the side vents
+- **Fidget-friendly** - the five knobs spin and the handle folds flat along the top
+- **Desk footprint** - 161 × 106 mm and 133 mm tall, with the screen leaning back 18°
+- **Easy to print** - every part prints without supports, about 250 g of PLA in all
+- **Parametric** - an OpenSCAD model, so a different screen or speakers is a matter of changing a few numbers
+
+The screen mount has been checked with a printed fit test, shown below. The full case has not been printed yet.
+
+<p>
+  <img src="hardware/stand/fit_test_front.jpg" alt="The screen counting down to the next meeting in demo mode, seated in the printed fit-test frame" width="56%">
+  <img src="hardware/stand/fit_test_back.jpg" alt="The back of the fit test, with the Pi and audio HAT held by the shelf" width="37%">
+</p>
+
+The model, STL export script and print and assembly instructions are in [`hardware/stand`](hardware/stand/README.md).
 
 ## Troubleshooting
 
