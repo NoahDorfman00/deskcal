@@ -44,7 +44,43 @@ class AlertTests(unittest.TestCase):
         self.assertIsNone(schedule.due_alert(events, self.start, [0], set()))
 
 
+class CollisionTests(unittest.TestCase):
+    now = datetime(2026, 10, 12, 13, 52, tzinfo=UTC)
+
+    def at(self, uid, hour, minute, minutes=30):
+        return ev(uid, datetime(2026, 10, 12, hour, minute, tzinfo=UTC), minutes)
+
+    def test_single_next_meeting_is_not_a_collision(self):
+        events = [self.at("a", 14, 0), self.at("b", 14, 30)]  # back to back
+        self.assertEqual([e.uid for e in schedule.next_group(events, self.now)], ["a"])
+
+    def test_overlapping_meetings_grouped_with_next(self):
+        events = [self.at("a", 14, 0), self.at("b", 14, 0, 45), self.at("c", 15, 0)]
+        self.assertEqual([e.uid for e in schedule.next_group(events, self.now)], ["a", "b"])
+
+    def test_meeting_in_progress_that_runs_into_next_counts(self):
+        events = [self.at("long", 13, 0, 90), self.at("a", 14, 0)]
+        self.assertEqual([e.uid for e in schedule.next_group(events, self.now)], ["a", "long"])
+
+    def test_nothing_upcoming(self):
+        self.assertEqual(schedule.next_group([self.at("old", 9, 0)], self.now), [])
+
+    def test_lanes_and_overlaps(self):
+        a, b, c = self.at("a", 14, 0), self.at("b", 14, 15, 30), self.at("c", 14, 30)
+        self.assertEqual([[e.uid for e in r] for r in schedule.lanes([c, b, a])], [["a", "c"], ["b"]])
+        self.assertEqual(
+            schedule.overlaps([a, b, c]),
+            [(datetime(2026, 10, 12, 14, 15, tzinfo=UTC), datetime(2026, 10, 12, 14, 45, tzinfo=UTC))],
+        )
+
+
 class FormatTests(unittest.TestCase):
+    def test_countdown(self):
+        now = datetime(2026, 10, 12, 13, 52, tzinfo=UTC)
+        self.assertEqual(schedule.fmt_countdown(now + timedelta(minutes=8), now), "00:08:00")
+        self.assertEqual(schedule.fmt_countdown(now + timedelta(hours=26, seconds=0.2), now), "26:00:01")
+        self.assertEqual(schedule.fmt_countdown(now - timedelta(seconds=5), now), "00:00:00")
+
     now = datetime(2026, 10, 12, 9, 0, tzinfo=UTC)
 
     def test_humanize(self):

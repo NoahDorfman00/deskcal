@@ -28,7 +28,56 @@ def current_events(events: list[Event], now: datetime) -> list[Event]:
 
 
 def upcoming_events(events: list[Event], now: datetime) -> list[Event]:
-    return [e for e in timed(events) if e.start > now]
+    return sorted((e for e in timed(events) if e.start > now), key=lambda e: e.start)
+
+
+def next_group(events: list[Event], now: datetime) -> list[Event]:
+    """The next meeting, followed by every meeting that overlaps it.
+
+    More than one entry means a collision. Meetings already in progress count
+    if they run past the next one's start; back-to-back meetings don't.
+    """
+    upcoming = upcoming_events(events, now)
+    if not upcoming:
+        return []
+    first = upcoming[0]
+    clashes = [
+        e
+        for e in timed(events)
+        if e is not first and e.end > now and e.start < first.end and e.end > first.start
+    ]
+    return [first] + clashes
+
+
+def lanes(events: list[Event]) -> list[list[Event]]:
+    """Split meetings into rows so that no two in the same row overlap."""
+    rows: list[list[Event]] = []
+    for e in sorted(timed(events), key=lambda e: (e.start, e.end)):
+        for row in rows:
+            if row[-1].end <= e.start:
+                row.append(e)
+                break
+        else:
+            rows.append([e])
+    return rows
+
+
+def overlaps(events: list[Event]) -> list[tuple[datetime, datetime]]:
+    """Merged time spans during which two or more meetings are running."""
+    spans = []
+    pool = timed(events)
+    for i, a in enumerate(pool):
+        for b in pool[i + 1 :]:
+            start, end = max(a.start, b.start), min(a.end, b.end)
+            if start < end:
+                spans.append((start, end))
+    merged: list[tuple[datetime, datetime]] = []
+    for start, end in sorted(spans):
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
 
 
 def due_alert(
@@ -78,6 +127,13 @@ def humanize_until(target: datetime, now: datetime, clock_24h: bool = False) -> 
     if days < 7:
         return f"{target:%a} {when}"
     return f"{target:%b} {target.day} {when}"
+
+
+def fmt_countdown(target: datetime, now: datetime) -> str:
+    """'00:08:00' style hh:mm:ss until `target`, rounded up to the second."""
+    seconds = max(0, -int(-(target - now).total_seconds() // 1))
+    hours, rest = divmod(seconds, 3600)
+    return f"{hours:02d}:{rest // 60:02d}:{rest % 60:02d}"
 
 
 def fmt_time(dt: datetime, clock_24h: bool = False) -> str:

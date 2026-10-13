@@ -1,13 +1,20 @@
-"""Fullscreen PyQt5 display: clock, current/next meeting, later today, alerts."""
+"""Fullscreen PyQt5 display styled as a logic analyzer.
+
+Clock, hh:mm:ss countdown to the next meeting, its title, and a waveform of
+the hours ahead in which every pulse is a meeting. The panel is about
+70 x 50 mm, so nothing on it is drawn smaller than 32 px.
+"""
 
 from __future__ import annotations
 
 import logging
 import threading
 from datetime import datetime, timedelta
+from pathlib import Path
 
-from PyQt5.QtCore import QObject, Qt, QTimer, pyqtSignal
-from PyQt5.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PyQt5.QtCore import QObject, QPointF, QRectF, Qt, QTimer, pyqtSignal
+from PyQt5.QtGui import QColor, QFont, QFontDatabase, QFontMetricsF, QPainter, QPainterPath, QPen
+from PyQt5.QtWidgets import QFrame, QLabel, QVBoxLayout, QWidget
 
 from . import schedule, sound
 from .calendar_source import Event, demo_events, fetch_events
@@ -15,15 +22,28 @@ from .config import Config
 
 log = logging.getLogger(__name__)
 
-FONT = "Nunito Sans"
-BG = "#0f1115"
-CARD = "#1a1d24"
-TEXT = "#f2f3f5"
-MUTED = "#8b919c"
-CALM = "#5aa9e6"  # > 15 min away
-SOON = "#f4b942"  # <= 15 min
-URGENT = "#ff5c5c"  # <= 5 min
-NOW = "#4cc38a"  # in progress
+FONT = "Chakra Petch"
+FONT_DIR = Path(__file__).parent / "fonts"
+MEDIUM, SEMIBOLD, BOLD = QFont.Medium, QFont.DemiBold, QFont.Bold
+
+BG = "#14171c"
+PANEL = "#0c1622"  # waveform background
+TEXT = "#e6ebf0"
+MUTED = "#a3b1c2"
+YELLOW = "#f7d046"  # next meeting, first trace
+CYAN = "#39c5e0"  # second trace
+GREEN = "#3ddc84"  # in progress
+RED = "#ff8a80"  # collision
+HATCH = QColor(255, 107, 94, 115)  # overlap band on the waveform
+
+CALM, SOON, URGENT, NOW = CYAN, YELLOW, RED, GREEN  # alert banner colors
+
+W, H = 800, 480  # design size; scaled to fit the real window
+MARGIN = 20
+WAVE = QRectF(MARGIN, 324, W - 2 * MARGIN, 140)
+WAVE_BEFORE = timedelta(hours=1)  # history shown left of the "now" cursor
+WAVE_SPAN = timedelta(hours=6)
+LINE = 6  # trace thickness
 
 RETRY_SECONDS = 30  # retry interval after a failed fetch
 
@@ -36,7 +56,7 @@ def urgency_color(minutes_away: float) -> str:
     return CALM
 
 
-def label(text: str = "", size: int = 16, color: str = TEXT, weight: int = 400) -> QLabel:
+def label(text: str = "", size: int = 32, color: str = TEXT, weight: int = 500) -> QLabel:
     lbl = QLabel(text)
     lbl.setStyleSheet(
         f"color: {color}; font-family: '{FONT}'; font-size: {size}px; font-weight: {weight};"
@@ -51,13 +71,71 @@ def restyle(lbl: QLabel, color: str) -> None:
     lbl.setStyleSheet(css[:start] + f"color: {color};" + css[css.index(";", start) + 1 :])
 
 
-def describe(e: Event, clock_24h: bool) -> str:
+def describe(e: Event, clock_24h: bool, now: datetime | None = None) -> str:
     parts = [schedule.fmt_range(e, clock_24h)]
+    if now and e.start.date() != now.date():
+        days = (e.start.date() - now.date()).days
+        parts.insert(0, "Tomorrow" if days == 1 else f"{e.start:%a}")
     if e.video:
         parts.append(e.video)
     if e.location:
         parts.append(e.location)
-    return "  ·  ".join(parts)
+    return " · ".join(parts)
+
+
+def load_fonts() -> None:
+    for ttf in sorted(FONT_DIR.glob("*.ttf")):
+        if QFontDatabase.addApplicationFont(str(ttf)) < 0:
+            log.warning("Could not load font %s", ttf.name)
+
+
+def draw_text(
+    p: QPainter,
+    rect: QRectF,
+    text: str,
+    size: int,
+    weight: int = MEDIUM,
+    color: str = TEXT,
+    align: Qt.AlignmentFlag = Qt.AlignLeft,
+    min_size: int | None = None,
+    tabular: bool = False,
+) -> QRectF:
+    """Draw one line in `rect`, shrinking then eliding it to fit the width.
+
+    With `tabular`, digits get equal-width cells so a ticking countdown
+    doesn't jitter. Returns the rectangle the text actually covers.
+    """
+
+    def measure(px: int):
+        font = QFont(FONT)
+        font.setPixelSize(px)
+        font.setWeight(weight)
+        fm = QFontMetricsF(font)
+        digit = max(fm.horizontalAdvance(d) for d in "0123456789")
+        cells = [digit if tabular and c.isdigit() else fm.horizontalAdvance(c) for c in text]
+        return font, fm, cells, sum(cells) if tabular else fm.horizontalAdvance(text)
+
+    font, fm, cells, width = measure(size)
+    while width > rect.width() and size > (min_size or size):
+        size -= 2
+        font, fm, cells, width = measure(size)
+    if width > rect.width():
+        text = fm.elidedText(text, Qt.ElideRight, rect.width())
+        tabular = False
+        width = fm.horizontalAdvance(text)
+
+    x = rect.right() - width if align == Qt.AlignRight else rect.left()
+    baseline = rect.top() + (rect.height() + fm.ascent() - fm.descent()) / 2
+    p.setFont(font)
+    p.setPen(QColor(color))
+    if tabular:
+        cx = x
+        for c, cell in zip(text, cells):
+            p.drawText(QPointF(cx + (cell - fm.horizontalAdvance(c)) / 2, baseline), c)
+            cx += cell
+    else:
+        p.drawText(QPointF(x, baseline), text)
+    return QRectF(x, rect.top(), width, rect.height())
 
 
 class Fetcher(QObject):
@@ -99,20 +177,17 @@ class AlertOverlay(QFrame):
         self._pulse_on = False
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(40, 30, 40, 30)
+        layout.setContentsMargins(24, 16, 24, 16)
         layout.addStretch()
-        self.heading = label("", 54, TEXT, 800)
-        self.title = label("", 34, TEXT, 700)
+        self.heading = label("", 88, TEXT, 700)
+        self.title = label("", 52, TEXT, 600)
         self.title.setWordWrap(True)
-        self.detail = label("", 22, TEXT, 400)
-        self.hint = label("tap to dismiss", 16, TEXT, 400)
+        self.detail = label("", 32, TEXT, 500)
         for w in (self.heading, self.title, self.detail):
             w.setAlignment(Qt.AlignCenter)
             layout.addWidget(w)
             layout.addSpacing(8)
         layout.addStretch()
-        self.hint.setAlignment(Qt.AlignCenter)
-        layout.addWidget(self.hint)
 
         self.pulse = QTimer(self, interval=700, timeout=self._toggle)
         self.hide()
@@ -120,10 +195,10 @@ class AlertOverlay(QFrame):
     def show_alert(self, alert: schedule.Alert, volume: float) -> None:
         first = alert.events[0]
         if alert.minutes_before == 0:
-            self.heading.setText("Starting now")
+            self.heading.setText("STARTING NOW")
             self.color = NOW
         else:
-            self.heading.setText(f"In {alert.minutes_before} min")
+            self.heading.setText(f"IN {alert.minutes_before} MIN")
             self.color = urgency_color(alert.minutes_before)
         titles = [e.title for e in alert.events]
         self.title.setText(titles[0] if len(titles) == 1 else " + ".join(titles))
@@ -147,7 +222,7 @@ class AlertOverlay(QFrame):
         bg = self.color if self._pulse_on else BG
         fg = BG if self._pulse_on else self.color
         self.setStyleSheet(f"AlertOverlay {{ background: {bg}; }}")
-        for w in (self.heading, self.title, self.detail, self.hint):
+        for w in (self.heading, self.title, self.detail):
             restyle(w, fg)
 
     def dismiss(self) -> None:
@@ -169,8 +244,7 @@ class MainWindow(QWidget):
         self.errors: list[str] = []
 
         self.setWindowTitle("Desk Calendar")
-        self.setStyleSheet(f"background: {BG};")
-        self._build()
+        load_fonts()
 
         self.overlay = AlertOverlay(self, cfg.clock_24h)
 
@@ -178,7 +252,8 @@ class MainWindow(QWidget):
         self.fetcher.done.connect(self._on_fetched)
         self.fetch_timer = QTimer(self, singleShot=True, timeout=self.refresh)
 
-        self.tick_timer = QTimer(self, interval=1000, timeout=self.tick)
+        # Faster than once a second so the countdown never skips a beat.
+        self.tick_timer = QTimer(self, interval=250, timeout=self.tick)
         self.tick_timer.start()
 
         if demo:
@@ -186,74 +261,6 @@ class MainWindow(QWidget):
         else:
             self.refresh()
         self.tick()
-
-    # ---- layout -------------------------------------------------------
-    def _build(self) -> None:
-        root = QVBoxLayout(self)
-        root.setContentsMargins(28, 12, 28, 10)
-        root.setSpacing(8)
-
-        header = QHBoxLayout()
-        self.clock = label("", 46, TEXT, 700)
-        self.date = label("", 20, MUTED, 400)
-        header.addWidget(self.clock)
-        header.addStretch()
-        header.addWidget(self.date, alignment=Qt.AlignRight | Qt.AlignVCenter)
-        root.addLayout(header)
-
-        # "Now" strip, only visible while a meeting is in progress.
-        self.now_bar = QFrame(objectName="nowBar")
-        self.now_bar.setStyleSheet(
-            f"#nowBar {{ background: {CARD}; border-left: 5px solid {NOW}; border-radius: 8px; }}"
-        )
-        now_layout = QHBoxLayout(self.now_bar)
-        now_layout.setContentsMargins(16, 8, 16, 8)
-        self.now_tag = label("NOW", 15, NOW, 800)
-        self.now_title = label("", 19, TEXT, 600)
-        self.now_ends = label("", 16, MUTED, 400)
-        now_layout.addWidget(self.now_tag)
-        now_layout.addSpacing(10)
-        now_layout.addWidget(self.now_title, 1)
-        now_layout.addWidget(self.now_ends)
-        root.addWidget(self.now_bar)
-
-        # The main "next meeting" card.
-        self.card = QFrame(objectName="card")
-        card = QVBoxLayout(self.card)
-        card.setContentsMargins(24, 16, 24, 18)
-        card.setSpacing(6)
-        self.next_tag = label("", 18, CALM, 800)
-        self.next_title = label("", 34, TEXT, 700)
-        self.next_title.setWordWrap(True)
-        self.next_detail = label("", 19, MUTED, 400)
-        card.addWidget(self.next_tag)
-        card.addWidget(self.next_title)
-        card.addWidget(self.next_detail)
-        card.addStretch()
-        root.addWidget(self.card, 1)
-
-        self.later_heading = label("LATER TODAY", 14, MUTED, 800)
-        root.addWidget(self.later_heading)
-        self.later_rows = []
-        for _ in range(2):
-            row = QHBoxLayout()
-            t = label("", 18, MUTED, 600)
-            t.setFixedWidth(110)
-            n = label("", 18, TEXT, 400)
-            row.addWidget(t)
-            row.addWidget(n, 1)
-            root.addLayout(row)
-            self.later_rows.append((t, n))
-
-        self.status = label("", 13, MUTED, 400)
-        self.status.setAlignment(Qt.AlignRight)
-        self.status.setWordWrap(True)  # long error text mustn't widen the window
-        root.addWidget(self.status)
-
-    def _style_card(self, color: str) -> None:
-        self.card.setStyleSheet(
-            f"#card {{ background: {CARD}; border-left: 6px solid {color}; border-radius: 12px; }}"
-        )
 
     # ---- data ---------------------------------------------------------
     def refresh(self) -> None:
@@ -272,60 +279,9 @@ class MainWindow(QWidget):
         self.fetch_timer.start(int(delay * 1000))
         self.tick()
 
-    # ---- every second -------------------------------------------------
     def tick(self) -> None:
         now = datetime.now().astimezone()
-        h24 = self.cfg.clock_24h
-        self.clock.setText(schedule.fmt_time(now, h24))
-        self.date.setText(f"{now:%A, %B} {now.day}")
-
-        # In progress
-        current = schedule.current_events(self.events, now)
-        if current:
-            e = current[0]
-            extra = f"  +{len(current) - 1} more" if len(current) > 1 else ""
-            self.now_title.setText(e.title + extra)
-            left = int((e.end - now).total_seconds() // 60) + 1
-            self.now_ends.setText(f"ends {schedule.fmt_time(e.end, h24)} · {left} min left")
-            self.now_bar.show()
-        else:
-            self.now_bar.hide()
-
-        # Next up
-        upcoming = schedule.upcoming_events(self.events, now)
-        if upcoming:
-            e = upcoming[0]
-            minutes_away = (e.start - now).total_seconds() / 60
-            color = urgency_color(minutes_away)
-            self.next_tag.setText("NEXT  ·  " + schedule.humanize_until(e.start, now, h24).upper())
-            restyle(self.next_tag, color)
-            self.next_title.setText(e.title)
-            self.next_detail.setText(describe(e, h24))
-            self._style_card(color)
-        else:
-            self.next_tag.setText("ALL CLEAR")
-            restyle(self.next_tag, NOW)
-            self.next_title.setText("No upcoming meetings")
-            if not self.cfg.calendars and not self.demo:
-                self.next_detail.setText("Add a calendar to ~/.config/deskcal/config.toml")
-            elif self.last_sync is None and not self.demo:
-                self.next_detail.setText("Waiting for the calendar (see status below)")
-            else:
-                self.next_detail.setText("Nothing on the calendar for the next week")
-            self._style_card(NOW)
-
-        # Later today (after the next one)
-        later = [e for e in upcoming[1:] if e.start.date() == now.date()]
-        self.later_heading.setVisible(bool(later))
-        for i, (t, n) in enumerate(self.later_rows):
-            if i < len(later):
-                t.setText(schedule.fmt_time(later[i].start, h24))
-                n.setText(later[i].title)
-            else:
-                t.setText("")
-                n.setText("")
-
-        self._update_status(now)
+        self.update()
 
         alert = schedule.due_alert(self.events, now, self.cfg.alert_offsets, self.fired)
         if alert:
@@ -337,18 +293,118 @@ class MainWindow(QWidget):
             live = {e.key for e in self.events if e.end > now - timedelta(hours=1)}
             self.fired = {k for k in self.fired if k[0] in live}
 
-    def _update_status(self, now: datetime) -> None:
-        if self.demo:
-            self.status.setText("demo mode")
-            return
-        if self.last_sync is None:
-            text = "syncing…" if not self.errors else "; ".join(self.errors)
+    # ---- drawing ------------------------------------------------------
+    def paintEvent(self, event) -> None:  # noqa: N802 (Qt API)
+        now = datetime.now().astimezone()
+        p = QPainter(self)
+        p.setRenderHints(QPainter.Antialiasing | QPainter.TextAntialiasing)
+        p.fillRect(self.rect(), QColor(BG))
+        scale = min(self.width() / W, self.height() / H)
+        p.translate((self.width() - W * scale) / 2, (self.height() - H * scale) / 2)
+        p.scale(scale, scale)
+
+        self._paint_header(p, now)
+        group = schedule.next_group(self.events, now)
+        if len(group) > 1:
+            self._paint_collision(p, now, group)
+        elif group:
+            self._paint_next(p, now, group[0])
         else:
-            text = f"synced {schedule.fmt_time(self.last_sync.astimezone(), self.cfg.clock_24h)}"
-            if self.errors:
-                text = "offline · last " + text
-        self.status.setText(text)
-        restyle(self.status, SOON if self.errors else MUTED)
+            self._paint_clear(p)
+        self._paint_wave(p, now)
+
+    def _paint_header(self, p: QPainter, now: datetime) -> None:
+        row = QRectF(MARGIN, 16, W - 2 * MARGIN, 40)
+        used = draw_text(p, row, schedule.fmt_time(now, self.cfg.clock_24h), 40, SEMIBOLD)
+        if self.errors:
+            rest = QRectF(used.right() + 20, row.top(), 200, row.height())
+            used = draw_text(p, rest, "OFFLINE", 32, SEMIBOLD, RED)
+        right = QRectF(used.right() + 60, row.top(), row.right() - used.right() - 60, row.height())
+
+        current = schedule.current_events(self.events, now)
+        if not current:
+            draw_text(p, right, f"{now:%a %b} {now.day}", 32, MEDIUM, MUTED, Qt.AlignRight)
+            return
+        title = current[0].title + (f" +{len(current) - 1}" if len(current) > 1 else "")
+        drawn = draw_text(p, right, title, 32, SEMIBOLD, GREEN, Qt.AlignRight)
+        p.fillRect(QRectF(drawn.left() - 30, row.center().y() - 9, 18, 18), QColor(GREEN))
+
+    def _paint_next(self, p: QPainter, now: datetime, e: Event) -> None:
+        wide = W - 2 * MARGIN
+        countdown = schedule.fmt_countdown(e.start, now)
+        draw_text(p, QRectF(MARGIN, 64, wide, 116), countdown, 116, BOLD, YELLOW, tabular=True)
+        draw_text(p, QRectF(MARGIN, 186, wide, 68), e.title, 64, SEMIBOLD, min_size=48)
+        detail = describe(e, self.cfg.clock_24h, now)
+        draw_text(p, QRectF(MARGIN, 262, wide, 40), detail, 32, MEDIUM, MUTED)
+
+    def _paint_collision(self, p: QPainter, now: datetime, group: list[Event]) -> None:
+        wide = W - 2 * MARGIN
+        banner = f"{len(group)} AT ONCE · {schedule.fmt_countdown(group[0].start, now)}"
+        draw_text(p, QRectF(MARGIN, 64, wide, 76), banner, 72, BOLD, RED, min_size=48, tabular=True)
+        rows = sorted(group, key=lambda e: (e.start, e.end))[:2]  # same order as the traces
+        for e, color, y in zip(rows, (YELLOW, CYAN), (154, 226)):
+            row = QRectF(MARGIN, y, wide, 56)
+            p.fillRect(QRectF(row.left(), row.center().y() - 14, 28, 28), QColor(color))
+            ends = "to " + schedule.fmt_time(e.end, self.cfg.clock_24h)
+            drawn = draw_text(p, row, ends, 32, MEDIUM, MUTED, Qt.AlignRight)
+            title = QRectF(row.left() + 42, y, drawn.left() - row.left() - 58, row.height())
+            draw_text(p, title, e.title, 52, SEMIBOLD, min_size=40)
+
+    def _paint_clear(self, p: QPainter) -> None:
+        wide = W - 2 * MARGIN
+        if not self.cfg.calendars and not self.demo:
+            detail = "Add a calendar in config.toml"
+        elif self.last_sync is None and not self.demo:
+            detail = "Waiting for the calendar" if self.errors else "Syncing…"
+        else:
+            detail = "Nothing in the next week"
+        draw_text(p, QRectF(MARGIN, 64, wide, 116), "ALL CLEAR", 104, BOLD, GREEN)
+        draw_text(p, QRectF(MARGIN, 186, wide, 68), "No meetings", 64, SEMIBOLD)
+        draw_text(p, QRectF(MARGIN, 262, wide, 40), detail, 32, MEDIUM, MUTED)
+
+    def _paint_wave(self, p: QPainter, now: datetime) -> None:
+        """Every pulse is a meeting; a second trace appears when two overlap."""
+        start = now - WAVE_BEFORE
+        end = start + WAVE_SPAN
+        shown = [e for e in schedule.timed(self.events) if e.end > start and e.start < end]
+        rows = schedule.lanes(shown)
+
+        def x_of(t: datetime) -> float:
+            return WAVE.left() + (t - start) / WAVE_SPAN * WAVE.width()
+
+        p.save()
+        p.setClipRect(WAVE)
+        p.fillRect(WAVE, QColor(PANEL))
+        if len(rows) > 1:
+            traces = [(rows[0], YELLOW, 17, 61), ([e for r in rows[1:] for e in r], CYAN, 81, 125)]
+        else:
+            traces = [(rows[0] if rows else [], YELLOW, 33, 107)]
+        for events, color, top, base in traces:
+            top, base = WAVE.top() + top, WAVE.top() + base
+            path = QPainterPath(QPointF(WAVE.left(), base))
+            edge = WAVE.left()
+            for e in sorted(events, key=lambda e: e.start):
+                # Inset so back-to-back meetings read as separate pulses.
+                x0 = max(x_of(e.start) + LINE, edge)
+                x1 = max(x_of(e.end) - LINE, x0 + LINE)
+                for point in ((x0, base), (x0, top), (x1, top), (x1, base)):
+                    path.lineTo(*point)
+                edge = x1
+            path.lineTo(WAVE.right(), base)
+            p.setPen(QPen(QColor(color), LINE, Qt.SolidLine, Qt.SquareCap, Qt.MiterJoin))
+            p.drawPath(path)
+
+        p.setPen(QPen(HATCH, LINE, Qt.SolidLine, Qt.FlatCap))
+        for a, b in schedule.overlaps(shown):
+            band = QRectF(x_of(a), WAVE.top(), x_of(b) - x_of(a), WAVE.height())
+            p.setClipRect(band.intersected(WAVE))
+            x = band.left() - WAVE.height()
+            while x < band.right():
+                p.drawLine(QPointF(x, WAVE.bottom()), QPointF(x + WAVE.height(), WAVE.top()))
+                x += 16
+        p.setClipRect(WAVE)
+        p.fillRect(QRectF(x_of(now) - 2, WAVE.top(), 4, WAVE.height()), QColor(TEXT))
+        p.restore()
 
     def resizeEvent(self, event) -> None:  # noqa: N802 (Qt API)
         self.overlay.setGeometry(self.rect())

@@ -2,7 +2,9 @@
 
 A "what's my next meeting" desk display for a Raspberry Pi touchscreen - shows what's on now and next, and chimes before each meeting starts.
 
-![Desk Calendar showing the current and next meeting](docs/screenshot.png)
+![Desk Calendar counting down to the next meeting above a waveform of the day](docs/screenshot.png)
+
+![Two overlapping meetings shown as a collision](docs/collision.png)
 
 ## Overview
 
@@ -30,12 +32,13 @@ It reads a Google Calendar without an OAuth app. Work accounts often block third
 
 ## Features
 
-- **Now / Next / Later today** - the meeting you're in with time remaining, the next one with a countdown, and the couple after that
-- **Urgency colors** - the next-meeting card goes from blue (more than 15 min away) to amber (15 min or less) to red (5 min or less)
+- **Logic analyzer display** - an `hh:mm:ss` countdown to the next meeting, its title, and a waveform of the next few hours in which every pulse is a meeting
+- **Collisions** - double-booked meetings are listed together under a red banner, and the waveform grows a second trace with the overlap hatched
+- **Built for a tiny panel** - the screen is about 70 × 50 mm, so nothing is drawn smaller than 32 px
 - **Alerts** - the screen flashes and a chime plays N minutes before each meeting (default 5) and again when it starts; tap to dismiss, or it clears itself after 3 minutes
 - **Video badges** - Meet, Zoom, Teams and Webex meetings are labeled
 - **Noise filtering** - all-day events, cancelled events, working-location and out-of-office entries, and meetings you declined are skipped
-- **Offline tolerant** - the last downloaded copy is kept on disk, so a network blip (or booting before Wi-Fi is up) doesn't blank the screen; the sync status turns amber instead
+- **Offline tolerant** - the last downloaded copy is kept on disk, so a network blip (or booting before Wi-Fi is up) doesn't blank the screen; a red OFFLINE flag appears next to the clock instead
 - **Minimal data exposure** - the feed sends only the fields the display uses, and no attendee names or emails
 - **Starts at boot** - runs as a systemd user service and restarts itself if it crashes
 
@@ -111,6 +114,7 @@ deskcal/
 │   ├── calendar_source.py    # Feed download, parsing, disk cache
 │   ├── schedule.py           # Now/next, alert timing, time formatting
 │   ├── ui.py                 # PyQt5 window and alert overlay
+│   ├── fonts/                # Chakra Petch (SIL Open Font License)
 │   ├── sound.py              # Chime generation and playback
 │   └── config.py             # config.toml and .env loading
 ├── tests/                    # Unit tests
@@ -172,7 +176,7 @@ XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY=wayland-0 QT_QPA_PLATFORM=wayland
 ### "Add a calendar to ~/.config/deskcal/config.toml"
 - No feed is configured: add an entry under `calendars` and its URL in `.env`
 
-### Sync status is amber / "offline"
+### The display says OFFLINE
 - Check the network, then open the feed URL in a browser: it should show JSON
 - If it shows a Google sign-in page, the deployment's access isn't set to **Anyone**
 - If it shows a script error, check that the **Google Calendar API** service is added
