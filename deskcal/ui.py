@@ -26,17 +26,19 @@ FONT = "Chakra Petch"
 FONT_DIR = Path(__file__).parent / "fonts"
 MEDIUM, SEMIBOLD, BOLD = QFont.Medium, QFont.DemiBold, QFont.Bold
 
-BG = "#14171c"
-PANEL = "#0c1622"  # waveform background
-TEXT = "#e6ebf0"
-MUTED = "#a3b1c2"
-YELLOW = "#f7d046"  # next meeting, first trace
-CYAN = "#39c5e0"  # second trace
-GREEN = "#3ddc84"  # in progress
-RED = "#ff8a80"  # collision
-HATCH = QColor(255, 107, 94, 115)  # overlap band on the waveform
+# Green phosphor monochrome, like an old benchtop scope. With no second hue,
+# emphasis comes from brightness and from inverse video (dark on a lit bar).
+BG = "#06100b"
+PANEL = "#0a1a12"  # waveform background
+GRID = "#17402b"  # graticule
+BRIGHT = "#a8ffc6"  # countdown, first trace
+TEXT = "#86f0ac"
+MUTED = "#4dbb7c"
+TRACE2 = "#3f9e68"  # second trace
+GLOW = QColor(168, 255, 198, 40)  # phosphor bloom around a trace
+HATCH = QColor(168, 255, 198, 110)  # overlap band on the waveform
 
-CALM, SOON, URGENT, NOW = CYAN, YELLOW, RED, GREEN  # alert banner colors
+CALM = SOON = URGENT = NOW = BRIGHT  # alert banner colors
 
 W, H = 800, 480  # design size; scaled to fit the real window
 MARGIN = 20
@@ -136,6 +138,15 @@ def draw_text(
     else:
         p.drawText(QPointF(x, baseline), text)
     return QRectF(x, rect.top(), width, rect.height())
+
+
+def draw_inverse(p: QPainter, rect: QRectF, text: str, size: int, weight: int = MEDIUM) -> QRectF:
+    """Draw one line as inverse video: dark text on a lit bar."""
+    inner = rect.adjusted(10, 0, -10, 0)
+    bar = draw_text(p, inner, text, size, weight, BRIGHT).adjusted(-10, 0, 10, 0)
+    p.fillRect(bar, QColor(BRIGHT))
+    draw_text(p, inner, text, size, weight, BG)
+    return bar
 
 
 class Fetcher(QObject):
@@ -318,7 +329,7 @@ class MainWindow(QWidget):
         used = draw_text(p, row, schedule.fmt_time(now, self.cfg.clock_24h), 40, SEMIBOLD)
         if self.errors:
             rest = QRectF(used.right() + 20, row.top(), 200, row.height())
-            used = draw_text(p, rest, "OFFLINE", 32, SEMIBOLD, RED)
+            used = draw_inverse(p, rest, "OFFLINE", 32, SEMIBOLD)
         right = QRectF(used.right() + 60, row.top(), row.right() - used.right() - 60, row.height())
 
         current = schedule.current_events(self.events, now)
@@ -326,13 +337,13 @@ class MainWindow(QWidget):
             draw_text(p, right, f"{now:%a %b} {now.day}", 32, MEDIUM, MUTED, Qt.AlignRight)
             return
         title = current[0].title + (f" +{len(current) - 1}" if len(current) > 1 else "")
-        drawn = draw_text(p, right, title, 32, SEMIBOLD, GREEN, Qt.AlignRight)
-        p.fillRect(QRectF(drawn.left() - 30, row.center().y() - 9, 18, 18), QColor(GREEN))
+        drawn = draw_text(p, right, title, 32, SEMIBOLD, TEXT, Qt.AlignRight)
+        p.fillRect(QRectF(drawn.left() - 30, row.center().y() - 9, 18, 18), QColor(TEXT))
 
     def _paint_next(self, p: QPainter, now: datetime, e: Event) -> None:
         wide = W - 2 * MARGIN
         countdown = schedule.fmt_countdown(e.start, now)
-        draw_text(p, QRectF(MARGIN, 64, wide, 116), countdown, 116, BOLD, YELLOW, tabular=True)
+        draw_text(p, QRectF(MARGIN, 64, wide, 116), countdown, 116, BOLD, BRIGHT, tabular=True)
         draw_text(p, QRectF(MARGIN, 186, wide, 68), e.title, 64, SEMIBOLD, min_size=48)
         detail = describe(e, self.cfg.clock_24h, now)
         draw_text(p, QRectF(MARGIN, 262, wide, 40), detail, 32, MEDIUM, MUTED)
@@ -340,9 +351,11 @@ class MainWindow(QWidget):
     def _paint_collision(self, p: QPainter, now: datetime, group: list[Event]) -> None:
         wide = W - 2 * MARGIN
         banner = f"{len(group)} AT ONCE · {schedule.fmt_countdown(group[0].start, now)}"
-        draw_text(p, QRectF(MARGIN, 64, wide, 76), banner, 72, BOLD, RED, min_size=48, tabular=True)
+        bar = QRectF(MARGIN, 62, wide, 80)
+        p.fillRect(bar, QColor(BRIGHT))
+        draw_text(p, bar.adjusted(12, 0, -12, 0), banner, 72, BOLD, BG, min_size=48, tabular=True)
         rows = sorted(group, key=lambda e: (e.start, e.end))[:2]  # same order as the traces
-        for e, color, y in zip(rows, (YELLOW, CYAN), (154, 226)):
+        for e, color, y in zip(rows, (BRIGHT, TRACE2), (154, 226)):
             row = QRectF(MARGIN, y, wide, 56)
             p.fillRect(QRectF(row.left(), row.center().y() - 14, 28, 28), QColor(color))
             ends = "to " + schedule.fmt_time(e.end, self.cfg.clock_24h)
@@ -358,7 +371,7 @@ class MainWindow(QWidget):
             detail = "Waiting for the calendar" if self.errors else "Syncing…"
         else:
             detail = "Nothing in the next week"
-        draw_text(p, QRectF(MARGIN, 64, wide, 116), "ALL CLEAR", 104, BOLD, GREEN)
+        draw_text(p, QRectF(MARGIN, 64, wide, 116), "ALL CLEAR", 104, BOLD, BRIGHT)
         draw_text(p, QRectF(MARGIN, 186, wide, 68), "No meetings", 64, SEMIBOLD)
         draw_text(p, QRectF(MARGIN, 262, wide, 40), detail, 32, MEDIUM, MUTED)
 
@@ -375,10 +388,16 @@ class MainWindow(QWidget):
         p.save()
         p.setClipRect(WAVE)
         p.fillRect(WAVE, QColor(PANEL))
+        # Graticule: a line on every hour, plus the horizontal centre line.
+        hour = start.replace(minute=0, second=0, microsecond=0)
+        while hour < end:
+            p.fillRect(QRectF(x_of(hour) - 1, WAVE.top(), 2, WAVE.height()), QColor(GRID))
+            hour += timedelta(hours=1)
+        p.fillRect(QRectF(WAVE.left(), WAVE.center().y() - 1, WAVE.width(), 2), QColor(GRID))
         if len(rows) > 1:
-            traces = [(rows[0], YELLOW, 17, 61), ([e for r in rows[1:] for e in r], CYAN, 81, 125)]
+            traces = [(rows[0], BRIGHT, 17, 61), ([e for r in rows[1:] for e in r], TRACE2, 81, 125)]
         else:
-            traces = [(rows[0] if rows else [], YELLOW, 33, 107)]
+            traces = [(rows[0] if rows else [], BRIGHT, 33, 107)]
         for events, color, top, base in traces:
             top, base = WAVE.top() + top, WAVE.top() + base
             path = QPainterPath(QPointF(WAVE.left(), base))
@@ -391,8 +410,9 @@ class MainWindow(QWidget):
                     path.lineTo(*point)
                 edge = x1
             path.lineTo(WAVE.right(), base)
-            p.setPen(QPen(QColor(color), LINE, Qt.SolidLine, Qt.SquareCap, Qt.MiterJoin))
-            p.drawPath(path)
+            for ink, width in ((GLOW, LINE * 3), (QColor(color), LINE)):
+                p.setPen(QPen(ink, width, Qt.SolidLine, Qt.SquareCap, Qt.MiterJoin))
+                p.drawPath(path)
 
         p.setPen(QPen(HATCH, LINE, Qt.SolidLine, Qt.FlatCap))
         for a, b in schedule.overlaps(shown):
@@ -403,7 +423,7 @@ class MainWindow(QWidget):
                 p.drawLine(QPointF(x, WAVE.bottom()), QPointF(x + WAVE.height(), WAVE.top()))
                 x += 16
         p.setClipRect(WAVE)
-        p.fillRect(QRectF(x_of(now) - 2, WAVE.top(), 4, WAVE.height()), QColor(TEXT))
+        p.fillRect(QRectF(x_of(now) - 2, WAVE.top(), 4, WAVE.height()), QColor(BRIGHT))
         p.restore()
 
     def resizeEvent(self, event) -> None:  # noqa: N802 (Qt API)
