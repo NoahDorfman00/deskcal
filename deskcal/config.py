@@ -6,6 +6,8 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .sound import CHIMES
+
 DEFAULT_PATH = Path.home() / ".config" / "deskcal" / "config.toml"
 
 
@@ -16,6 +18,7 @@ class Config:
     alert_minutes_before: list[int] = field(default_factory=lambda: [5])
     alert_at_start: bool = True
     volume: float = 0.8
+    chime: str = "bells"
     clock_24h: bool = False
 
     @property
@@ -54,6 +57,8 @@ def load(path: Path = DEFAULT_PATH) -> Config:
         if not hasattr(cfg, key):
             raise ValueError(f"Unknown setting {key!r} in {path}")
         setattr(cfg, key, value)
+    if cfg.chime not in CHIMES:
+        raise ValueError(f"Unknown chime {cfg.chime!r} in {path}; choose from {sorted(CHIMES)}")
     for cal in cfg.calendars:
         cal["url"] = _expand(cal["url"], path)
     return cfg

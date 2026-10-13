@@ -24,9 +24,9 @@ def main() -> int:
     cfg = config.load(args.config)
 
     if args.test_sound:
-        sound.play("soon", cfg.volume)
+        sound.play("soon", cfg.volume, cfg.chime)
         time.sleep(2.5)
-        sound.play("now", cfg.volume)
+        sound.play("now", cfg.volume, cfg.chime)
         time.sleep(3)
         return 0
 

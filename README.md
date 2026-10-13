@@ -96,6 +96,7 @@ refresh_minutes = 5          # how often to re-download the calendars
 alert_minutes_before = [5]   # chime this many minutes before each meeting
 alert_at_start = true        # ...and again when it starts
 volume = 0.8                 # chime volume, 0.0-1.0
+chime = "bells"              # or "beeps" (test equipment), "terminal" (retro buzz)
 clock_24h = false
 ```
 

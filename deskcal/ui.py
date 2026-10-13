@@ -203,7 +203,7 @@ class AlertOverlay(QFrame):
         self.pulse = QTimer(self, interval=700, timeout=self._toggle)
         self.hide()
 
-    def show_alert(self, alert: schedule.Alert, volume: float) -> None:
+    def show_alert(self, alert: schedule.Alert, volume: float, chime: str = "bells") -> None:
         first = alert.events[0]
         if alert.minutes_before == 0:
             self.heading.setText("STARTING NOW")
@@ -221,7 +221,7 @@ class AlertOverlay(QFrame):
         self.show()
         self.raise_()
         self.pulse.start()
-        sound.play("now" if alert.minutes_before == 0 else "soon", volume)
+        sound.play("now" if alert.minutes_before == 0 else "soon", volume, chime)
 
     def _toggle(self) -> None:
         self._pulse_on = not self._pulse_on
@@ -297,7 +297,7 @@ class MainWindow(QWidget):
         alert = schedule.due_alert(self.events, now, self.cfg.alert_offsets, self.fired)
         if alert:
             log.info("Alert: %s (%d min)", [e.title for e in alert.events], alert.minutes_before)
-            self.overlay.show_alert(alert, self.cfg.volume)
+            self.overlay.show_alert(alert, self.cfg.volume, self.cfg.chime)
 
         # Keep the fired set from growing forever.
         if now.second == 0:

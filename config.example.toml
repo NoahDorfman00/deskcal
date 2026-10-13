@@ -20,5 +20,8 @@ alert_at_start = true
 
 # Chime volume, 0.0–1.0
 volume = 0.8
+# Chime sound: "bells" (soft rising notes), "beeps" (test-equipment beeps)
+# or "terminal" (old computer terminal buzz)
+chime = "bells"
 
 clock_24h = false
