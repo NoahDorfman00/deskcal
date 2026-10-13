@@ -178,16 +178,16 @@ XDG_RUNTIME_DIR=/run/user/1000 WAYLAND_DISPLAY=wayland-0 QT_QPA_PLATFORM=wayland
 
 The Pi, screen, audio HAT and speakers slot into a 3D-printed stand shaped like a mini oscilloscope, to go with the logic analyzer display.
 
-![The stand, with the screen in the middle of an oscilloscope front panel](hardware/stand/preview.png)
+![The printed stand on a desk, counting down to the next meeting](hardware/stand/assembled.jpg)
 
 - **Slot-in fit** - the screen and Pi tilt in from the back and drop onto a shelf; nothing is screwed down
 - **Speakers** - they stand on end behind the side vents
 - **Fidget-friendly** - the five knobs spin and the handle folds flat along the top
-- **Desk footprint** - 161 × 106 mm and 133 mm tall, with the screen leaning back 18°
+- **Desk footprint** - 161 × 106 mm and 135 mm tall, with the screen leaning back 18°
 - **Easy to print** - every part prints without supports, about 250 g of PLA in all
 - **Parametric** - an OpenSCAD model, so a different screen or speakers is a matter of changing a few numbers
 
-The screen mount has been checked with a printed fit test, shown below. The full case has not been printed yet.
+The photo above is the first full print. Its speaker bays turned out tight, so the model has since been given a little more room there; that change has not been reprinted. The screen mount was checked beforehand with a printed fit test:
 
 <p>
   <img src="hardware/stand/fit_test_front.jpg" alt="The screen counting down to the next meeting in demo mode, seated in the printed fit-test frame" width="56%">

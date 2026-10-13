@@ -24,10 +24,9 @@ va_bot  = 3.6;
 disp_t  = 5.7;       // front of the glass to the back of the display PCB
 
 // 8 ohm 5 W box speakers, standing on end and firing out through the sides.
-spk_len = 100;       // overall, including mounting ears
-spk_w   = 36;
+spk_len = 102;       // top to bottom, including the mounting ears and the wire stub
+spk_w   = 45;        // front to back, including the mounting ears
 spk_t   = 21;
-spk_ear = 4.5;
 
 // ---- Fit ---------------------------------------------------------------
 
@@ -78,7 +77,7 @@ pcb_x = lens_x + pcb_inset;
 z_sh = z_pb - 0.1;               // shelf surface
 y_lip = face_t + disp_t + lip_gap;
 
-spk_y0 = 7.5;                    // front of the speaker body
+spk_y0 = 7.5;                    // front of the speaker
 side_cx = (lens_x + win_l - bev) / 2;   // centre of the strips beside the window
 strip_z = 24;                    // centre line of the control strip
 knob_dx = 31;
@@ -100,7 +99,7 @@ h_arm = 4;
 h_th = 6;
 h_bar = 9;
 pin_w = 5.5;
-pin_l = h_gap + wall + 1.0;
+pin_l = h_gap + wall;            // flush inside, so the pins clear the speakers
 piv_d = 8.6;
 
 shaft_d = 6.0;
@@ -155,7 +154,7 @@ module window_2d(grow = 0) {
 
 knob_big_x = [W / 2 - knob_dx, W / 2, W / 2 + knob_dx];
 knob_small_x = [side_cx, W - side_cx];
-knob_small_z = 68;
+knob_small_z = H - 37.6;
 bnc_x = [17, W - 17];
 
 module face_holes_2d() {
@@ -170,8 +169,8 @@ module face_engrave_2d() {
         window_2d(bev + 2.2);
         window_2d(bev + 1.4);
     }
-    label("DESKCAL", side_cx, 91, 4.2);
-    label("LA-35", W - side_cx, 91, 4.2);
+    label("DESKCAL", side_cx, H - 14.6, 4.2);
+    label("LA-35", W - side_cx, H - 14.6, 4.2);
     label("INTEN", knob_small_x[0], knob_small_z + 12, 3.2);
     label("TRIG", knob_small_x[1], knob_small_z + 12, 3.2);
     label("VOLTS/DIV", knob_big_x[0], 6.5, 3.2);
@@ -183,7 +182,7 @@ module face_engrave_2d() {
 }
 
 module side_vents_2d() {
-    for (z = [12 : 5 : 92]) slot(12, z - 1.1, 42, z + 1.1);
+    for (z = [12 : 5 : H - 13.5]) slot(12, z - 1.1, 42, z + 1.1);
     translate(piv) circle(d = piv_d);
 }
 
@@ -227,7 +226,7 @@ module speaker_bays() {
     xl = wall + bay_x;
     xr = W - wall - bay_x;
     // Partitions that hold the speakers against the side vents.
-    ext_y(face_t - 0.1, 46) {
+    ext_y(face_t - 0.1, spk_y0 + spk_w + 1) {
         translate([xl, wall - 0.1]) square([part_t, H - 2 * wall + 0.2]);
         translate([xr - part_t, wall - 0.1]) square([part_t, H - 2 * wall + 0.2]);
     }
@@ -325,7 +324,7 @@ module back_panel() {
             translate([cable_x, 10]) circle(d = 15);
         }
         ext_y(D - 1, D + bp_t + 1)
-            for (x = [W / 2 - 36 : 6 : W / 2 + 36]) slot(x - 1.3, 58, x + 1.3, 94);
+            for (x = [W / 2 - 36 : 6 : W / 2 + 36]) slot(x - 1.3, H - 47.6, x + 1.3, H - 11.6);
     }
 }
 
@@ -438,8 +437,8 @@ module electronics() {
     color("#223a7a") translate([pcb_x + 21.5, y_pi + 12, z_top - 30]) cube([65, 1.6, 30]);
     color("#3a3") translate([pcb_x + 50, y_pi + 13.6, z_top - 30]) cube([15, 10, 8]);
     color("#222") {
-        translate([wall + fit, spk_y0, wall + 0.4]) cube([spk_t, spk_w, 92]);
-        translate([W - wall - fit - spk_t, spk_y0, wall + 0.4]) cube([spk_t, spk_w, 92]);
+        translate([wall + fit, spk_y0, wall + 0.4]) cube([spk_t, spk_w, spk_len - 2]);
+        translate([W - wall - fit - spk_t, spk_y0, wall + 0.4]) cube([spk_t, spk_w, spk_len - 2]);
     }
     // Power plug and cable.
     color("#333") {

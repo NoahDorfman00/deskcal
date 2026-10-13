@@ -2,9 +2,9 @@
 
 A 3D-printed mini oscilloscope that the Pi, screen, audio HAT and speakers slot into.
 
-![The stand, with the screen in the middle of an oscilloscope front panel](preview.png)
+![The printed stand on a desk, counting down to the next meeting](assembled.jpg)
 
-It is 152 mm wide, 106 mm tall and 68 mm deep before the knobs and feet, and leans the screen back 18°. The speakers stand on end behind the side vents, the knobs spin, and the handle folds flat along the top. Nothing is screwed or glued except the two dummy BNC jacks.
+It is 152 mm wide, 108 mm tall and 68 mm deep before the knobs and feet, and leans the screen back 18°. The speakers stand on end behind the side vents, the knobs spin, and the handle folds flat along the top. Nothing is screwed or glued except the two dummy BNC jacks.
 
 The model is built for this hardware:
 
@@ -12,7 +12,7 @@ The model is built for this hardware:
 - WM8960 Audio HAT on the GPIO header
 - the pair of 8 Ω 5 W box speakers that ships with the HAT
 
-Dimensions come from Waveshare's drawings. The screen mount has been checked with a printed fit test; the rest of the case, including the speaker bays, has not been printed yet.
+Dimensions come from Waveshare's drawings. The photo above is the first full print. Its speaker bays turned out tight, so they were enlarged from measurements of the real speakers; that change has not been reprinted.
 
 ## Parts
 
@@ -36,7 +36,7 @@ Print everything at 0.2 mm layers with no supports. PLA is fine; all of it comes
 
 ## Before you print the case
 
-1. Measure a speaker. The model assumes 100 mm long including the mounting ears and 21 mm thick. If yours differ, change `spk_len` and `spk_t` at the top of `deskcal_stand.scad`.
+1. Measure a speaker. The model assumes 102 mm top to bottom including the mounting ears and the wire stub, 45 mm front to back including the ears, and 21 mm thick. If yours differ, change `spk_len`, `spk_w` and `spk_t` at the top of `deskcal_stand.scad`.
 2. Check that the gap between the display board and the Pi is at least 3 mm. The two retaining lips sit in that gap.
 3. Print `fit_test.stl` and try the screen in it, following step 2 of the assembly below. The display board should drop onto the shelf with a little play, and should not pull straight back out.
 
@@ -69,4 +69,6 @@ The Pi has no fan in here. There are vents in the floor, sides and back, but che
 
 ## Changing the design
 
-Everything is driven by the values at the top of `deskcal_stand.scad`. Open it in OpenSCAD to see the assembled view, set `section_x` to cut it open, or set `part` to look at one piece. The panel lettering is in `face_engrave_2d()`.
+Everything is driven by the values at the top of `deskcal_stand.scad`. Open it in OpenSCAD to see the assembled view below, set `section_x` to cut it open, or set `part` to look at one piece. The panel lettering is in `face_engrave_2d()`.
+
+![The assembled view in OpenSCAD](preview.png)
