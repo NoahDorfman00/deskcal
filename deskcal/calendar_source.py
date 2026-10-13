@@ -142,8 +142,8 @@ def demo_events(now: datetime | None = None) -> list[Event]:
     now = (now or datetime.now().astimezone()).replace(second=0, microsecond=0)
     m = lambda minutes: now + timedelta(minutes=minutes)  # noqa: E731
     return [
-        Event("d1", "Daily standup", m(-10), m(1), video="Zoom"),
-        Event("d2", "Design review: calendar display", m(1), m(31), location="Room 4B", video="Meet"),
+        Event("d1", "Daily standup", m(-10), m(8), video="Zoom"),
+        Event("d2", "Design review", m(8), m(38), video="Meet"),
         Event("d3", "1:1 with Sam", m(90), m(120)),
         Event("d3b", "Vendor sync", m(90), m(135), video="Zoom"),
         Event("d4", "Sprint planning", m(180), m(240), video="Teams"),
