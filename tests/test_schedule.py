@@ -65,14 +65,6 @@ class CollisionTests(unittest.TestCase):
     def test_nothing_upcoming(self):
         self.assertEqual(schedule.next_group([self.at("old", 9, 0)], self.now), [])
 
-    def test_lanes_and_overlaps(self):
-        a, b, c = self.at("a", 14, 0), self.at("b", 14, 15, 30), self.at("c", 14, 30)
-        self.assertEqual([[e.uid for e in r] for r in schedule.lanes([c, b, a])], [["a", "c"], ["b"]])
-        self.assertEqual(
-            schedule.overlaps([a, b, c]),
-            [(datetime(2026, 10, 12, 14, 15, tzinfo=UTC), datetime(2026, 10, 12, 14, 45, tzinfo=UTC))],
-        )
-
 
 class FormatTests(unittest.TestCase):
     def test_countdown(self):
@@ -123,3 +115,16 @@ class IdleTests(unittest.TestCase):
     def test_all_day_events_ignored(self):
         events = [ev("a", self.now, minutes=24 * 60, all_day=True)]
         self.assertTrue(schedule.is_idle(events, self.now, self.horizon))
+
+
+class ConcurrencyTests(unittest.TestCase):
+    def test_overlap_counts_two(self):
+        runs = schedule.concurrency([(0, 10), (5, 15)])
+        self.assertEqual(runs, [(0, 5, 1), (5, 10, 2), (10, 15, 1)])
+
+    def test_gap_between_meetings(self):
+        self.assertEqual(schedule.concurrency([(0, 4), (6, 8)]), [(0, 4, 1), (6, 8, 1)])
+
+    def test_contained_meeting(self):
+        runs = schedule.concurrency([(0, 20), (5, 10), (5, 10)])
+        self.assertEqual(runs, [(0, 5, 1), (5, 10, 3), (10, 20, 1)])

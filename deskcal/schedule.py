@@ -57,35 +57,22 @@ def is_idle(events: list[Event], now: datetime, horizon: timedelta) -> bool:
     return not upcoming or upcoming[0].start - now > horizon
 
 
-def lanes(events: list[Event]) -> list[list[Event]]:
-    """Split meetings into rows so that no two in the same row overlap."""
-    rows: list[list[Event]] = []
-    for e in sorted(timed(events), key=lambda e: (e.start, e.end)):
-        for row in rows:
-            if row[-1].end <= e.start:
-                row.append(e)
-                break
-        else:
-            rows.append([e])
-    return rows
+def concurrency(spans: list[tuple[float, float]]) -> list[tuple[float, float, int]]:
+    """Split overlapping (start, end) spans into runs of how many are active.
 
-
-def overlaps(events: list[Event]) -> list[tuple[datetime, datetime]]:
-    """Merged time spans during which two or more meetings are running."""
-    spans = []
-    pool = timed(events)
-    for i, a in enumerate(pool):
-        for b in pool[i + 1 :]:
-            start, end = max(a.start, b.start), min(a.end, b.end)
-            if start < end:
-                spans.append((start, end))
-    merged: list[tuple[datetime, datetime]] = []
-    for start, end in sorted(spans):
-        if merged and start <= merged[-1][1]:
-            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+    Returns (start, end, count) for every stretch where at least one is active.
+    """
+    edges = sorted({x for span in spans for x in span})
+    runs: list[tuple[float, float, int]] = []
+    for a, b in zip(edges, edges[1:]):
+        count = sum(1 for s, e in spans if s <= a and e >= b)
+        if not count:
+            continue
+        if runs and runs[-1][1] == a and runs[-1][2] == count:
+            runs[-1] = (runs[-1][0], b, count)
         else:
-            merged.append((start, end))
-    return merged
+            runs.append((a, b, count))
+    return runs
 
 
 def due_alert(

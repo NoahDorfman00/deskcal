@@ -14,21 +14,25 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from PyQt5.QtCore import QObject, QPointF, QRectF, Qt, QTimer, pyqtSignal
+from PyQt5.QtCore import QObject, QPointF, QRectF, QSize, Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import (
     QColor,
     QFont,
     QFontDatabase,
     QFontMetricsF,
+    QImage,
     QPainter,
     QPainterPath,
     QPen,
     QPolygonF,
+    QLinearGradient,
+    QRadialGradient,
+    QTransform,
 )
 from PyQt5.QtWidgets import QFrame, QLabel, QVBoxLayout, QWidget
 
 from . import schedule, sound
-from .calendar_source import Event, demo_events, fetch_events
+from .calendar_source import DEMO_SCENES, Event, demo_events, fetch_events
 from .config import Config
 
 log = logging.getLogger(__name__)
@@ -40,29 +44,51 @@ MEDIUM, SEMIBOLD, BOLD = QFont.Medium, QFont.DemiBold, QFont.Bold
 # Green phosphor monochrome, like an old benchtop scope. With no second hue,
 # emphasis comes from brightness and from inverse video (dark on a lit bar).
 BG = "#06100b"
-PANEL = "#0a1a12"  # waveform background
 GRID = "#17402b"  # graticule
+AXIS = "#2a6b47"  # time axis on the meeting screen
 BRIGHT = "#a8ffc6"  # countdown, first trace
 TEXT = "#86f0ac"
 MUTED = "#4dbb7c"
-TRACE2 = "#3f9e68"  # second trace
+TRACE2 = "#3f9e68"  # screensaver figure
 GLOW = QColor(168, 255, 198, 40)  # phosphor bloom around a trace
-HATCH = QColor(168, 255, 198, 110)  # overlap band on the waveform
+HATCH = QColor(168, 255, 198, 50)  # overlap band on the waveform
 
 CALM = SOON = URGENT = NOW = BRIGHT  # alert banner colors
 
 W, H = 800, 480  # design size; scaled to fit the real window
 MARGIN = 20
-WAVE = QRectF(MARGIN, 324, W - 2 * MARGIN, 140)
-WAVE_BEFORE = timedelta(hours=1)  # history shown left of the "now" cursor
-WAVE_SPAN = timedelta(hours=6)
 LINE = 6  # trace thickness
 
 RETRY_SECONDS = 30  # retry interval after a failed fetch
 
-# Screensaver: a Lissajous figure on a scope screen, morphing between ratios.
-SCOPE = QRectF(MARGIN, 204, W - 2 * MARGIN, 260)
-SCOPE_DIVS = (10, 4)  # graticule divisions across, down
+# Graticule over the whole face. Behind text it fades to a blurred, dimmer
+# copy so the words stay legible, and the text itself gets a phosphor bloom.
+DIV = 80  # px per division: 10 x 6 across the panel
+TEXT_HALO = 10  # blur radius, in device px, of the zone cleared around text
+GRID_SOFT = 3  # blur radius of the grid seen through that zone
+SCANLINE = 3  # px between faint horizontal scanlines
+
+# Meeting screen: the graticule is the waveform's timebase. The horizontal
+# axis is time, the vertical axis is "now", and every pulse is a meeting.
+WAVE = QRectF(0, 4 * DIV, W, 2 * DIV)  # bottom two divisions; top edge is the axis
+TIMEBASE = timedelta(minutes=40)  # per division: 40 min back, 6 h ahead
+NOW_X = DIV
+CURSOR_FADE = 2 * DIV  # how far the "now" axis reaches up into the text
+TRACE_ALPHA = 0.45  # meeting traces are dim; the sweeping beam lights them up
+SWEEP_SECONDS = 6.0  # time for the beam to cross the screen
+SWEEP_REST = 0.25  # fraction of a sweep the beam spends off-screen before the next
+SWEEP_TAIL = 160  # px of afterglow behind the beam
+# The trace rises one step per meeting at once, between these heights below
+# the axis. Steps are sized for the busiest clash on screen, but never for
+# fewer than two, so a lone meeting stays at half height.
+TRACE_FLOOR = 136
+TRACE_CEILING = 30  # leaves room for ringing and interference under the axis
+MIN_STEPS = 2
+JITTER = 5  # px of interference per extra meeting in a clash
+RING = 14  # px of overshoot where the trace jumps into a clash
+
+# Screensaver: a Lissajous figure on the graticule, morphing between ratios.
+SCOPE_CENTER = QPointF(W / 2, 4 * DIV)
 FIGURES = [(1, 2), (3, 2), (3, 4), (5, 4), (2, 3), (1, 3), (4, 5)]  # x:y frequencies
 FIGURE_HOLD = 40.0  # seconds each figure is shown, including the morph
 FIGURE_MORPH = 5.0
@@ -72,6 +98,7 @@ BEAM_TAIL = 0.9  # rad of afterglow behind the spot
 SCOPE_POINTS = 480
 FRAME_MS = 33
 PEEK = timedelta(seconds=30)  # a tap on the screensaver shows the full view this long
+SCENE_LABEL = timedelta(seconds=3)  # how long a demo scene's name stays up
 
 
 def urgency_color(minutes_away: float) -> str:
@@ -171,6 +198,32 @@ def draw_inverse(p: QPainter, rect: QRectF, text: str, size: int, weight: int = 
     p.fillRect(bar, QColor(BRIGHT))
     draw_text(p, inner, text, size, weight, BG)
     return bar
+
+
+def blur(img: QImage, radius: int, boost: int = 1) -> QImage:
+    """Cheap blur: shrink, then smoothly scale back up.
+
+    `boost` stacks the result on itself to widen the solid core.
+    """
+    size = img.size()
+    small = img.scaled(
+        QSize(max(1, size.width() // radius), max(1, size.height() // radius)),
+        Qt.IgnoreAspectRatio,
+        Qt.SmoothTransformation,
+    )
+    out = small.scaled(size, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+    if boost > 1:
+        p = QPainter(out)
+        for _ in range(boost - 1):
+            p.drawImage(0, 0, out)
+        p.end()
+    return out
+
+
+def layer(size: QSize) -> QImage:
+    img = QImage(size, QImage.Format_ARGB32_Premultiplied)
+    img.fill(Qt.transparent)
+    return img
 
 
 def lissajous(t: float, s0: float = 0.0, span: float = 2 * math.pi, n: int = SCOPE_POINTS):
@@ -294,11 +347,18 @@ class MainWindow(QWidget):
         self.cfg = cfg
         self.demo = demo
         self.events: list[Event] = demo_events() if demo else []
+        self.scene = 0
+        self.scene_shown: datetime | None = None
         self.fired: set = set()
         self.last_sync: datetime | None = None
         self.errors: list[str] = []
         self.peek_until: datetime | None = None
         self.t0 = time.monotonic()
+        # Cached per size and screen: graticule (sharp, soft), CRT glass.
+        self.layers: tuple[tuple, QImage, QImage, QImage] | None = None
+        # Grid + text, composed in tick() so animation frames only add the trace.
+        self.backdrop: QImage | None = None
+        self.backdrop_key = None
 
         self.setWindowTitle("Desk Calendar")
         load_fonts()
@@ -312,8 +372,9 @@ class MainWindow(QWidget):
         # Faster than once a second so the countdown never skips a beat.
         self.tick_timer = QTimer(self, interval=250, timeout=self.tick)
         self.tick_timer.start()
-        # Only runs while the screensaver is up.
+        # Animation: the screensaver figure and the beam sweeping the meetings.
         self.frame_timer = QTimer(self, interval=FRAME_MS, timeout=self.update)
+        self.frame_timer.start()
 
         if demo:
             self.last_sync = datetime.now()
@@ -349,12 +410,8 @@ class MainWindow(QWidget):
 
     def tick(self) -> None:
         now = datetime.now().astimezone()
+        self.compose(now)
         self.update()
-        if self.idle(now) != self.frame_timer.isActive():
-            if self.frame_timer.isActive():
-                self.frame_timer.stop()
-            else:
-                self.frame_timer.start()
 
         alert = schedule.due_alert(self.events, now, self.cfg.alert_offsets, self.fired)
         if alert:
@@ -367,27 +424,168 @@ class MainWindow(QWidget):
             self.fired = {k for k in self.fired if k[0] in live}
 
     # ---- drawing ------------------------------------------------------
+    def design(self) -> QTransform:
+        """Maps the 800 x 480 design onto the real window, centred."""
+        scale = min(self.width() / W, self.height() / H)
+        t = QTransform()
+        t.translate((self.width() - W * scale) / 2, (self.height() - H * scale) / 2)
+        t.scale(scale, scale)
+        return t
+
+    def painter(self, device) -> QPainter:
+        p = QPainter(device)
+        p.setRenderHints(QPainter.Antialiasing | QPainter.TextAntialiasing)
+        p.setTransform(self.design())
+        return p
+
+    def _layers(self, idle: bool) -> tuple[QImage, QImage, QImage]:
+        """Graticule (sharp, soft) and CRT glass, cached per size and screen."""
+        key = (self.size(), idle)
+        if self.layers and self.layers[0] == key:
+            return self.layers[1:]
+        size = self.size()
+        inverse, _ = self.design().inverted()
+        area = inverse.mapRect(QRectF(self.rect()))  # visible design area
+
+        grid = layer(size)
+        p = self.painter(grid)
+        ink = QColor(GRID)
+        # No lines on the very edge: the panel smears its edge pixels into a bar.
+        x = math.floor(area.left() / DIV + 1) * DIV
+        while x < area.right() - 1:
+            p.fillRect(QRectF(x - 1, area.top(), 2, area.height()), ink)
+            x += DIV
+        y = math.floor(area.top() / DIV + 1) * DIV
+        while y < area.bottom() - 1:
+            p.fillRect(QRectF(area.left(), y - 1, area.width(), 2), ink)
+            y += DIV
+        p.end()
+        # Axes go on the sharp grid only, so they vanish cleanly behind text.
+        soft = blur(grid, GRID_SOFT, 2)
+        p = self.painter(grid)
+        if idle:
+            self._paint_scope_axes(p, area)
+        else:
+            self._paint_wave_axes(p, area)
+        p.end()
+
+        # CRT glass: faint scanlines and darkened corners.
+        glass = layer(size)
+        p = QPainter(glass)
+        for y in range(0, size.height(), SCANLINE):
+            p.fillRect(0, y, size.width(), 1, QColor(0, 0, 0, 24))
+        r = math.hypot(size.width(), size.height()) / 2
+        shade = QRadialGradient(QPointF(size.width() / 2, size.height() / 2), r)
+        shade.setColorAt(0.55, QColor(0, 0, 0, 0))
+        shade.setColorAt(1.0, QColor(0, 0, 0, 170))
+        p.fillRect(glass.rect(), shade)
+        p.end()
+
+        self.layers = (key, grid, soft, glass)
+        return self.layers[1:]
+
+    def _paint_scope_axes(self, p: QPainter, area: QRectF) -> None:
+        self._paint_axes(p, area, SCOPE_CENTER, QColor(GRID))
+
+    def _paint_wave_axes(self, p: QPainter, area: QRectF) -> None:
+        """Time axis along the top of the waveform; "now" axis fading up into the text."""
+        c = QPointF(NOW_X, WAVE.top())
+        fade = QLinearGradient(0, c.y(), 0, c.y() - CURSOR_FADE)
+        fade.setColorAt(0, QColor(AXIS))
+        fade.setColorAt(1, QColor(0, 0, 0, 0))
+        p.fillRect(QRectF(area.left(), c.y() - 1, area.width(), 2), QColor(AXIS))
+        p.fillRect(QRectF(c.x() - 1, area.top(), 2, area.height()), fade)
+        self._paint_axes(p, area, c, fade)
+
+    def _paint_axes(self, p: QPainter, area: QRectF, c: QPointF, ink) -> None:
+        """Minor ticks along the axes through `c`, five per division.
+
+        None on the screen edges, where the panel would smear them into a bar.
+        """
+        step = DIV / 5
+        x = c.x() - math.floor((c.x() - area.left()) / step) * step
+        if x < area.left() + 2:
+            x += step
+        while x < area.right() - 1:
+            p.fillRect(QRectF(x - 1, c.y() - 6, 2, 12), ink)
+            x += step
+        y = c.y() - math.floor((c.y() - area.top()) / step) * step
+        if y < area.top() + 2:
+            y += step
+        while y < area.bottom() - 1:
+            p.fillRect(QRectF(c.x() - 6, y - 1, 12, 2), ink)
+            y += step
+
+    def compose(self, now: datetime) -> None:
+        """Build the backdrop: graticule, cleared and blurred behind the text."""
+        idle = self.idle(now)
+        if idle:  # the screensaver's text changes once a minute
+            key = (self.size(), schedule.fmt_time(now, self.cfg.clock_24h), now.date(), bool(self.errors))
+            if key == self.backdrop_key and self.backdrop:
+                return
+        else:
+            key = None
+        self.backdrop_key = key
+        grid, soft, _ = self._layers(idle)
+
+        text = layer(self.size())
+        p = self.painter(text)
+        if idle:
+            self._paint_clock(p, now)
+        else:
+            self._paint_header(p, now)
+            group = schedule.next_group(self.events, now)
+            if len(group) > 1:
+                self._paint_collision(p, now, group)
+            elif group:
+                self._paint_next(p, now, group[0])
+            else:
+                self._paint_clear(p)
+        p.end()
+        halo = blur(text, TEXT_HALO, 4)
+
+        sharp = grid.copy()
+        p = QPainter(sharp)
+        p.setCompositionMode(QPainter.CompositionMode_DestinationOut)
+        p.drawImage(0, 0, halo)
+        p.end()
+        hazy = soft.copy()
+        p = QPainter(hazy)
+        p.setCompositionMode(QPainter.CompositionMode_DestinationIn)
+        p.drawImage(0, 0, halo)
+        p.end()
+
+        out = QImage(self.size(), QImage.Format_ARGB32_Premultiplied)
+        out.fill(QColor(BG))
+        p = QPainter(out)
+        p.drawImage(0, 0, sharp)
+        p.setOpacity(0.7)
+        p.drawImage(0, 0, hazy)
+        p.setOpacity(0.6)
+        p.drawImage(0, 0, blur(text, 4))  # phosphor bloom
+        p.setOpacity(1)
+        p.drawImage(0, 0, text)
+        p.end()
+        self.backdrop = out
+
+    # ---- drawing ------------------------------------------------------
     def paintEvent(self, event) -> None:  # noqa: N802 (Qt API)
         now = datetime.now().astimezone()
+        if self.backdrop is None or self.backdrop.size() != self.size():
+            self.compose(now)
         p = QPainter(self)
-        p.setRenderHints(QPainter.Antialiasing | QPainter.TextAntialiasing)
-        p.fillRect(self.rect(), QColor(BG))
-        scale = min(self.width() / W, self.height() / H)
-        p.translate((self.width() - W * scale) / 2, (self.height() - H * scale) / 2)
-        p.scale(scale, scale)
-
+        p.drawImage(0, 0, self.backdrop)
+        p.setRenderHints(QPainter.Antialiasing)
+        p.setTransform(self.design())
         if self.idle(now):
-            self._paint_screensaver(p, now)
-            return
-        self._paint_header(p, now)
-        group = schedule.next_group(self.events, now)
-        if len(group) > 1:
-            self._paint_collision(p, now, group)
-        elif group:
-            self._paint_next(p, now, group[0])
+            self._paint_scope(p)
         else:
-            self._paint_clear(p)
-        self._paint_wave(p, now)
+            self._paint_wave(p, now)
+        if self.scene_shown and datetime.now() - self.scene_shown < SCENE_LABEL:
+            name = f"DEMO {self.scene + 1}/{len(DEMO_SCENES)} · {DEMO_SCENES[self.scene].upper()}"
+            draw_inverse(p, QRectF(W - MARGIN - 560, H - 56, 560, 40), name, 32, SEMIBOLD)
+        p.resetTransform()
+        p.drawImage(0, 0, self._layers(self.idle(now))[2])
 
     def _paint_header(self, p: QPainter, now: datetime) -> None:
         row = QRectF(MARGIN, 16, W - 2 * MARGIN, 40)
@@ -419,14 +617,23 @@ class MainWindow(QWidget):
         bar = QRectF(MARGIN, 62, wide, 80)
         p.fillRect(bar, QColor(BRIGHT))
         draw_text(p, bar.adjusted(12, 0, -12, 0), banner, 72, BOLD, BG, min_size=48, tabular=True)
-        rows = sorted(group, key=lambda e: (e.start, e.end))[:2]  # same order as the traces
-        for e, color, y in zip(rows, (BRIGHT, TRACE2), (154, 226)):
-            row = QRectF(MARGIN, y, wide, 56)
-            p.fillRect(QRectF(row.left(), row.center().y() - 14, 28, 28), QColor(color))
+        # Up to three meetings fit between the banner and the waveform.
+        rows = sorted(group, key=lambda e: (e.start, e.end))
+        more = len(rows) - 3 if len(rows) > 3 else 0
+        rows = rows[: 2 if more else 3]
+        height = 144 / len(rows) if len(rows) + bool(more) < 3 else 160 / 3
+        size = 52 if len(rows) + bool(more) < 3 else 44
+        y = 154
+        for e in rows:
+            row = QRectF(MARGIN, y, wide, height)
+            p.fillRect(QRectF(row.left(), row.center().y() - 14, 28, 28), QColor(BRIGHT))
             ends = "to " + schedule.fmt_time(e.end, self.cfg.clock_24h)
             drawn = draw_text(p, row, ends, 32, MEDIUM, MUTED, Qt.AlignRight)
             title = QRectF(row.left() + 42, y, drawn.left() - row.left() - 58, row.height())
-            draw_text(p, title, e.title, 52, SEMIBOLD, min_size=40)
+            draw_text(p, title, e.title, size, SEMIBOLD, min_size=36)
+            y += height
+        if more:
+            draw_text(p, QRectF(MARGIN + 42, y, wide - 42, height), f"+{more + 1} more", 32, MEDIUM, MUTED)
 
     def _paint_clear(self, p: QPainter) -> None:
         wide = W - 2 * MARGIN
@@ -440,7 +647,7 @@ class MainWindow(QWidget):
         draw_text(p, QRectF(MARGIN, 186, wide, 68), "No meetings", 64, SEMIBOLD)
         draw_text(p, QRectF(MARGIN, 262, wide, 40), detail, 32, MEDIUM, MUTED)
 
-    def _paint_screensaver(self, p: QPainter, now: datetime) -> None:
+    def _paint_clock(self, p: QPainter, now: datetime) -> None:
         wide = W - 2 * MARGIN
         clock = schedule.fmt_time(now, self.cfg.clock_24h)
         draw_text(p, QRectF(MARGIN, 8, wide, 132), clock, 128, BOLD, BRIGHT, min_size=96, tabular=True)
@@ -449,23 +656,9 @@ class MainWindow(QWidget):
         if self.errors:
             draw_inverse(p, QRectF(used.right() + 20, row.top(), 200, row.height()), "OFFLINE", 32, SEMIBOLD)
 
-        p.save()
-        p.setClipRect(SCOPE)
-        p.fillRect(SCOPE, QColor(PANEL))
-        cols, rows = SCOPE_DIVS
-        dx, dy = SCOPE.width() / cols, SCOPE.height() / rows
-        for i in range(1, cols):
-            p.fillRect(QRectF(SCOPE.left() + i * dx - 1, SCOPE.top(), 2, SCOPE.height()), QColor(GRID))
-        for j in range(1, rows):
-            p.fillRect(QRectF(SCOPE.left(), SCOPE.top() + j * dy - 1, SCOPE.width(), 2), QColor(GRID))
-        # Minor ticks on the centre axes, five per division.
-        c = SCOPE.center()
-        for i in range(cols * 5):
-            p.fillRect(QRectF(SCOPE.left() + i * dx / 5 - 1, c.y() - 6, 2, 12), QColor(GRID))
-        for j in range(rows * 5):
-            p.fillRect(QRectF(c.x() - 6, SCOPE.top() + j * dy / 5 - 1, 12, 2), QColor(GRID))
-
-        rx, ry = 2.5 * dx, 1.5 * dy  # five divisions wide, three tall
+    def _paint_scope(self, p: QPainter) -> None:
+        c = SCOPE_CENTER
+        rx, ry = 2.5 * DIV, 1.5 * DIV  # five divisions wide, three tall
 
         def polygon(points) -> QPolygonF:
             return QPolygonF([QPointF(c.x() + x * rx, c.y() - y * ry) for x, y in points])
@@ -488,64 +681,132 @@ class MainWindow(QWidget):
         p.drawEllipse(tail[tail.size() - 1], 14, 14)
         p.setBrush(QColor(BRIGHT))
         p.drawEllipse(tail[tail.size() - 1], 6, 6)
-        p.restore()
 
     def _paint_wave(self, p: QPainter, now: datetime) -> None:
-        """Every pulse is a meeting; a second trace appears when two overlap."""
-        start = now - WAVE_BEFORE
-        end = start + WAVE_SPAN
+        """One trace: high during a meeting, higher and full of interference
+        where meetings clash."""
+        start = now - NOW_X / DIV * TIMEBASE
+        end = now + (W - NOW_X) / DIV * TIMEBASE
         shown = [e for e in schedule.timed(self.events) if e.end > start and e.start < end]
-        rows = schedule.lanes(shown)
 
         def x_of(t: datetime) -> float:
-            return WAVE.left() + (t - start) / WAVE_SPAN * WAVE.width()
+            return NOW_X + (t - now) / TIMEBASE * DIV
+
+        # Inset each meeting so back-to-back ones read as separate pulses.
+        spans = [(x_of(e.start) + LINE, max(x_of(e.end) - LINE, x_of(e.start) + 2 * LINE)) for e in shown]
+        runs = schedule.concurrency(spans)
+        clashes = [(a, b) for a, b, n in runs if n > 1]
+        t = time.monotonic() - self.t0
+
+        steps = max([MIN_STEPS] + [n for _, _, n in runs])
+        rise = (TRACE_FLOOR - TRACE_CEILING) / steps
+
+        def y_of(n: int) -> float:
+            return WAVE.top() + TRACE_FLOOR - n * rise
+
+        base = y_of(0)
+        path = QPainterPath(QPointF(WAVE.left() - LINE, base))
+        level = 0
+        for a, b, n in runs:
+            if path.currentPosition().x() < a:  # dropped back to nothing between runs
+                if level:
+                    path.lineTo(path.currentPosition().x(), base)
+                path.lineTo(a, base)
+                level = 0
+            y = y_of(n)
+            path.lineTo(a, y)
+            if n > 1:
+                x = a
+                while x < b:
+                    x = min(x + 3, b)
+                    d = x - a
+                    ring = RING * math.exp(-d / 14) * math.cos(d * 0.5)
+                    noise = math.sin(x * 0.9 + t * 23) * 0.6 + math.sin(x * 0.37 - t * 11) * 0.4
+                    jitter = min(JITTER * (n - 1), rise / 2)  # busier clashes are noisier
+                    path.lineTo(x, y - ring + jitter * noise * (1 - math.exp(-d / 6)))
+                path.lineTo(b, y)
+            else:
+                path.lineTo(b, y)
+            level = n
+        if level:
+            path.lineTo(path.currentPosition().x(), base)
+        path.lineTo(WAVE.right() + LINE, base)
 
         p.save()
         p.setClipRect(WAVE)
-        p.fillRect(WAVE, QColor(PANEL))
-        # Graticule: a line on every hour, plus the horizontal centre line.
-        hour = start.replace(minute=0, second=0, microsecond=0)
-        while hour < end:
-            p.fillRect(QRectF(x_of(hour) - 1, WAVE.top(), 2, WAVE.height()), QColor(GRID))
-            hour += timedelta(hours=1)
-        p.fillRect(QRectF(WAVE.left(), WAVE.center().y() - 1, WAVE.width(), 2), QColor(GRID))
-        if len(rows) > 1:
-            traces = [(rows[0], BRIGHT, 17, 61), ([e for r in rows[1:] for e in r], TRACE2, 81, 125)]
-        else:
-            traces = [(rows[0] if rows else [], BRIGHT, 33, 107)]
-        for events, color, top, base in traces:
-            top, base = WAVE.top() + top, WAVE.top() + base
-            path = QPainterPath(QPointF(WAVE.left(), base))
-            edge = WAVE.left()
-            for e in sorted(events, key=lambda e: e.start):
-                # Inset so back-to-back meetings read as separate pulses.
-                x0 = max(x_of(e.start) + LINE, edge)
-                x1 = max(x_of(e.end) - LINE, x0 + LINE)
-                for point in ((x0, base), (x0, top), (x1, top), (x1, base)):
-                    path.lineTo(*point)
-                edge = x1
-            path.lineTo(WAVE.right(), base)
-            for ink, width in ((GLOW, LINE * 3), (QColor(color), LINE)):
-                p.setPen(QPen(ink, width, Qt.SolidLine, Qt.SquareCap, Qt.MiterJoin))
-                p.drawPath(path)
-
         p.setPen(QPen(HATCH, LINE, Qt.SolidLine, Qt.FlatCap))
-        for a, b in schedule.overlaps(shown):
-            band = QRectF(x_of(a), WAVE.top(), x_of(b) - x_of(a), WAVE.height())
+        for a, b in clashes:
+            band = QRectF(a, WAVE.top(), b - a, WAVE.height())
             p.setClipRect(band.intersected(WAVE))
             x = band.left() - WAVE.height()
             while x < band.right():
                 p.drawLine(QPointF(x, WAVE.bottom()), QPointF(x + WAVE.height(), WAVE.top()))
                 x += 16
         p.setClipRect(WAVE)
-        p.fillRect(QRectF(x_of(now) - 2, WAVE.top(), 4, WAVE.height()), QColor(BRIGHT))
+
+        dim = QColor(BRIGHT)
+        dim.setAlphaF(TRACE_ALPHA)
+        for ink, width in ((GLOW, LINE * 3), (dim, LINE)):
+            p.setPen(QPen(ink, width, Qt.SolidLine, Qt.SquareCap, Qt.MiterJoin))
+            p.drawPath(path)
+        x = (t / SWEEP_SECONDS) % (1 + SWEEP_REST) * W
+        self._paint_beam(p, path, x, BRIGHT, flare=any(a <= x <= b for a, b in clashes))
         p.restore()
+
+    def _paint_beam(
+        self, p: QPainter, path: QPainterPath, x: float, color: str, flare: bool = False
+    ) -> None:
+        """A bright spot where `path` reaches `x`, with a fading afterglow behind it.
+
+        With `flare`, the spot blooms, as it does crossing a clash.
+        """
+        if x > W:
+            return  # resting off-screen between sweeps
+        lo, hi = 0.0, path.length()  # the path only moves rightward: bisect for x
+        for _ in range(20):
+            mid = (lo + hi) / 2
+            if path.pointAtPercent(path.percentAtLength(mid)).x() < x:
+                lo = mid
+            else:
+                hi = mid
+        head = hi
+        steps = 32
+        points = [
+            path.pointAtPercent(path.percentAtLength(max(0.0, head - SWEEP_TAIL * (1 - k / steps))))
+            for k in range(steps + 1)
+        ]
+        beam = QColor(color)
+        for k in range(1, len(points)):
+            beam.setAlphaF(k / steps)
+            p.setPen(QPen(beam, LINE, Qt.SolidLine, Qt.FlatCap))
+            p.drawLine(points[k - 1], points[k])
+        p.setPen(Qt.NoPen)
+        p.setBrush(GLOW)
+        p.drawEllipse(points[-1], 14, 14)
+        if flare:
+            p.drawEllipse(points[-1], 26, 26)
+        p.setBrush(QColor(BRIGHT))
+        p.drawEllipse(points[-1], 9 if flare else 6, 9 if flare else 6)
+        p.setBrush(Qt.NoBrush)
 
     def resizeEvent(self, event) -> None:  # noqa: N802 (Qt API)
         self.overlay.setGeometry(self.rect())
+        self.compose(datetime.now().astimezone())
         super().resizeEvent(event)
 
+    def next_scene(self) -> None:
+        """Demo mode: tap through the scenarios."""
+        self.scene = (self.scene + 1) % len(DEMO_SCENES)
+        self.events = demo_events(scene=self.scene)
+        self.fired = set()  # so the alert scene goes off every time round
+        self.scene_shown = datetime.now()
+        log.info("Demo scene: %s", DEMO_SCENES[self.scene])
+        self.tick()
+
     def mousePressEvent(self, event) -> None:  # noqa: N802 (Qt API)
+        if self.demo:
+            self.next_scene()
+            return
         now = datetime.now().astimezone()
         if self.idle(now):
             self.peek_until = now + PEEK  # show the full view for a moment

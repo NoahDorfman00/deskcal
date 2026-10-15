@@ -6,6 +6,8 @@ A "what's my next meeting" desk display for a Raspberry Pi touchscreen - shows w
 
 ![Two overlapping meetings shown as a collision](docs/collision.png)
 
+![The screensaver: time, date and a Lissajous figure](docs/screensaver.png)
+
 ## Overview
 
 Desk Calendar is a native PyQt5 fullscreen app for a small Raspberry Pi touchscreen (800×480) with speakers. It sits on a desk, shows the meeting you're in and the one coming up, and flashes the screen with a chime a few minutes before each meeting starts.
@@ -32,8 +34,8 @@ It reads a Google Calendar without an OAuth app. Work accounts often block third
 
 ## Features
 
-- **Logic analyzer display** - an `hh:mm:ss` countdown to the next meeting, its title, and a waveform of the next few hours in which every pulse is a meeting
-- **Collisions** - double-booked meetings are listed together under a red banner, and the waveform grows a second trace with the overlap hatched
+- **Logic analyzer display** - an `hh:mm:ss` countdown to the next meeting, its title, and a waveform of the next 6 hours in which every pulse is a meeting; the whole screen is a scope graticule (40 min per division) with a beam sweeping the trace
+- **Collisions** - double-booked meetings are listed together under a banner (up to three, then "+N more"), and the trace steps up once per meeting at once, buzzing with interference where they overlap
 - **Built for a tiny panel** - the screen is about 70 × 50 mm, so nothing is drawn smaller than 32 px
 - **Alerts** - the screen flashes and a chime plays N minutes before each meeting (default 5) and again when it starts; tap to dismiss, or it clears itself after 3 minutes
 - **Screensaver** - while nothing is on and the next meeting is more than 6 hours away, the screen shows just the time, the date and a slowly morphing Lissajous figure on a scope graticule; tap it to see the full view for 30 seconds
@@ -80,7 +82,7 @@ Anyone with that URL can read your next week of meetings, so treat it like a pas
 ### Manual Test
 
 ```bash
-python3 -m deskcal --demo --windowed   # fake schedule in a window
+python3 -m deskcal --demo --windowed   # fake schedule in a window; tap to cycle scenes
 python3 -m deskcal --test-sound        # play both chimes
 ```
 
