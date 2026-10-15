@@ -49,6 +49,14 @@ def next_group(events: list[Event], now: datetime) -> list[Event]:
     return [first] + clashes
 
 
+def is_idle(events: list[Event], now: datetime, horizon: timedelta) -> bool:
+    """True when no meeting is on and the next one starts more than `horizon` away."""
+    if current_events(events, now):
+        return False
+    upcoming = upcoming_events(events, now)
+    return not upcoming or upcoming[0].start - now > horizon
+
+
 def lanes(events: list[Event]) -> list[list[Event]]:
     """Split meetings into rows so that no two in the same row overlap."""
     rows: list[list[Event]] = []

@@ -20,6 +20,7 @@ class Config:
     volume: float = 0.8
     chime: str = "bells"
     clock_24h: bool = False
+    screensaver_hours: float = 6
 
     @property
     def alert_offsets(self) -> list[int]:

@@ -36,6 +36,7 @@ It reads a Google Calendar without an OAuth app. Work accounts often block third
 - **Collisions** - double-booked meetings are listed together under a red banner, and the waveform grows a second trace with the overlap hatched
 - **Built for a tiny panel** - the screen is about 70 × 50 mm, so nothing is drawn smaller than 32 px
 - **Alerts** - the screen flashes and a chime plays N minutes before each meeting (default 5) and again when it starts; tap to dismiss, or it clears itself after 3 minutes
+- **Screensaver** - while nothing is on and the next meeting is more than 6 hours away, the screen shows just the time, the date and a slowly morphing Lissajous figure on a scope graticule; tap it to see the full view for 30 seconds
 - **Video badges** - Meet, Zoom, Teams and Webex meetings are labeled
 - **Noise filtering** - all-day events, cancelled events, working-location and out-of-office entries, and meetings you declined are skipped
 - **Offline tolerant** - the last downloaded copy is kept on disk, so a network blip (or booting before Wi-Fi is up) doesn't blank the screen; a red OFFLINE flag appears next to the clock instead
@@ -98,6 +99,7 @@ alert_at_start = true        # ...and again when it starts
 volume = 0.8                 # chime volume, 0.0-1.0
 chime = "bells"              # or "beeps" (test equipment), "terminal" (retro buzz)
 clock_24h = false
+screensaver_hours = 6        # screensaver until a meeting is this close; 0 = off
 ```
 
 Add one feed per Google account to show several calendars; a meeting that appears on more than one is shown once.
@@ -160,6 +162,7 @@ python3 -m unittest
 Once installed and configured, the display starts at boot and keeps itself in sync.
 
 - Tap the main screen to force a sync
+- Tap the screensaver to see the full view for 30 seconds (and sync)
 - Tap an alert to dismiss it
 
 ```bash

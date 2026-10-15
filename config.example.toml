@@ -25,3 +25,7 @@ volume = 0.8
 chime = "bells"
 
 clock_24h = false
+
+# Screensaver: just the time, date and an oscilloscope animation while the
+# next meeting is more than this many hours away. 0 turns it off.
+screensaver_hours = 6

@@ -8,12 +8,23 @@ the hours ahead in which every pulse is a meeting. The panel is about
 from __future__ import annotations
 
 import logging
+import math
 import threading
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
 from PyQt5.QtCore import QObject, QPointF, QRectF, Qt, QTimer, pyqtSignal
-from PyQt5.QtGui import QColor, QFont, QFontDatabase, QFontMetricsF, QPainter, QPainterPath, QPen
+from PyQt5.QtGui import (
+    QColor,
+    QFont,
+    QFontDatabase,
+    QFontMetricsF,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPolygonF,
+)
 from PyQt5.QtWidgets import QFrame, QLabel, QVBoxLayout, QWidget
 
 from . import schedule, sound
@@ -48,6 +59,19 @@ WAVE_SPAN = timedelta(hours=6)
 LINE = 6  # trace thickness
 
 RETRY_SECONDS = 30  # retry interval after a failed fetch
+
+# Screensaver: a Lissajous figure on a scope screen, morphing between ratios.
+SCOPE = QRectF(MARGIN, 204, W - 2 * MARGIN, 260)
+SCOPE_DIVS = (10, 4)  # graticule divisions across, down
+FIGURES = [(1, 2), (3, 2), (3, 4), (5, 4), (2, 3), (1, 3), (4, 5)]  # x:y frequencies
+FIGURE_HOLD = 40.0  # seconds each figure is shown, including the morph
+FIGURE_MORPH = 5.0
+PHASE_SPEED = 0.35  # rad/s of x phase drift; makes the figure seem to turn
+BEAM_SPEED = 1.2  # rad/s the bright spot travels along the figure
+BEAM_TAIL = 0.9  # rad of afterglow behind the spot
+SCOPE_POINTS = 480
+FRAME_MS = 33
+PEEK = timedelta(seconds=30)  # a tap on the screensaver shows the full view this long
 
 
 def urgency_color(minutes_away: float) -> str:
@@ -147,6 +171,26 @@ def draw_inverse(p: QPainter, rect: QRectF, text: str, size: int, weight: int = 
     p.fillRect(bar, QColor(BRIGHT))
     draw_text(p, inner, text, size, weight, BG)
     return bar
+
+
+def lissajous(t: float, s0: float = 0.0, span: float = 2 * math.pi, n: int = SCOPE_POINTS):
+    """Points (x, y) in [-1, 1] along the screensaver figure at time `t`.
+
+    Each figure holds for FIGURE_HOLD seconds, then morphs into the next.
+    """
+    i, held = divmod(t, FIGURE_HOLD)
+    a1, b1 = FIGURES[int(i) % len(FIGURES)]
+    a2, b2 = FIGURES[(int(i) + 1) % len(FIGURES)]
+    mix = min(1.0, max(0.0, (held - FIGURE_HOLD + FIGURE_MORPH) / FIGURE_MORPH))
+    mix = mix * mix * (3 - 2 * mix)  # ease in and out
+    phase = t * PHASE_SPEED
+    points = []
+    for k in range(n + 1):
+        s = s0 + span * k / n
+        x = (1 - mix) * math.sin(a1 * s + phase) + mix * math.sin(a2 * s + phase)
+        y = (1 - mix) * math.sin(b1 * s) + mix * math.sin(b2 * s)
+        points.append((x, y))
+    return points
 
 
 class Fetcher(QObject):
@@ -253,6 +297,8 @@ class MainWindow(QWidget):
         self.fired: set = set()
         self.last_sync: datetime | None = None
         self.errors: list[str] = []
+        self.peek_until: datetime | None = None
+        self.t0 = time.monotonic()
 
         self.setWindowTitle("Desk Calendar")
         load_fonts()
@@ -266,6 +312,8 @@ class MainWindow(QWidget):
         # Faster than once a second so the countdown never skips a beat.
         self.tick_timer = QTimer(self, interval=250, timeout=self.tick)
         self.tick_timer.start()
+        # Only runs while the screensaver is up.
+        self.frame_timer = QTimer(self, interval=FRAME_MS, timeout=self.update)
 
         if demo:
             self.last_sync = datetime.now()
@@ -290,9 +338,23 @@ class MainWindow(QWidget):
         self.fetch_timer.start(int(delay * 1000))
         self.tick()
 
+    def idle(self, now: datetime) -> bool:
+        """Screensaver time: synced, and nothing for `screensaver_hours`."""
+        if self.cfg.screensaver_hours <= 0 or (self.last_sync is None and not self.demo):
+            return False
+        if self.peek_until and now < self.peek_until:
+            return False
+        horizon = timedelta(hours=self.cfg.screensaver_hours)
+        return schedule.is_idle(self.events, now, horizon)
+
     def tick(self) -> None:
         now = datetime.now().astimezone()
         self.update()
+        if self.idle(now) != self.frame_timer.isActive():
+            if self.frame_timer.isActive():
+                self.frame_timer.stop()
+            else:
+                self.frame_timer.start()
 
         alert = schedule.due_alert(self.events, now, self.cfg.alert_offsets, self.fired)
         if alert:
@@ -314,6 +376,9 @@ class MainWindow(QWidget):
         p.translate((self.width() - W * scale) / 2, (self.height() - H * scale) / 2)
         p.scale(scale, scale)
 
+        if self.idle(now):
+            self._paint_screensaver(p, now)
+            return
         self._paint_header(p, now)
         group = schedule.next_group(self.events, now)
         if len(group) > 1:
@@ -375,6 +440,56 @@ class MainWindow(QWidget):
         draw_text(p, QRectF(MARGIN, 186, wide, 68), "No meetings", 64, SEMIBOLD)
         draw_text(p, QRectF(MARGIN, 262, wide, 40), detail, 32, MEDIUM, MUTED)
 
+    def _paint_screensaver(self, p: QPainter, now: datetime) -> None:
+        wide = W - 2 * MARGIN
+        clock = schedule.fmt_time(now, self.cfg.clock_24h)
+        draw_text(p, QRectF(MARGIN, 8, wide, 132), clock, 128, BOLD, BRIGHT, min_size=96, tabular=True)
+        row = QRectF(MARGIN, 144, wide, 44)
+        used = draw_text(p, row, f"{now:%A, %B} {now.day}", 36, MEDIUM, MUTED)
+        if self.errors:
+            draw_inverse(p, QRectF(used.right() + 20, row.top(), 200, row.height()), "OFFLINE", 32, SEMIBOLD)
+
+        p.save()
+        p.setClipRect(SCOPE)
+        p.fillRect(SCOPE, QColor(PANEL))
+        cols, rows = SCOPE_DIVS
+        dx, dy = SCOPE.width() / cols, SCOPE.height() / rows
+        for i in range(1, cols):
+            p.fillRect(QRectF(SCOPE.left() + i * dx - 1, SCOPE.top(), 2, SCOPE.height()), QColor(GRID))
+        for j in range(1, rows):
+            p.fillRect(QRectF(SCOPE.left(), SCOPE.top() + j * dy - 1, SCOPE.width(), 2), QColor(GRID))
+        # Minor ticks on the centre axes, five per division.
+        c = SCOPE.center()
+        for i in range(cols * 5):
+            p.fillRect(QRectF(SCOPE.left() + i * dx / 5 - 1, c.y() - 6, 2, 12), QColor(GRID))
+        for j in range(rows * 5):
+            p.fillRect(QRectF(c.x() - 6, SCOPE.top() + j * dy / 5 - 1, 12, 2), QColor(GRID))
+
+        rx, ry = 2.5 * dx, 1.5 * dy  # five divisions wide, three tall
+
+        def polygon(points) -> QPolygonF:
+            return QPolygonF([QPointF(c.x() + x * rx, c.y() - y * ry) for x, y in points])
+
+        t = time.monotonic() - self.t0
+        trace = polygon(lissajous(t))
+        for ink, width in ((GLOW, 12), (QColor(TRACE2), 3)):
+            p.setPen(QPen(ink, width, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+            p.drawPolyline(trace)
+        # The beam: a bright spot with a fading afterglow behind it.
+        head = (t * BEAM_SPEED) % (2 * math.pi)
+        tail = polygon(lissajous(t, head - BEAM_TAIL, BEAM_TAIL, 40))
+        beam = QColor(BRIGHT)
+        for k in range(1, tail.size()):
+            beam.setAlphaF(k / (tail.size() - 1))
+            p.setPen(QPen(beam, LINE, Qt.SolidLine, Qt.FlatCap))
+            p.drawLine(tail[k - 1], tail[k])
+        p.setPen(Qt.NoPen)
+        p.setBrush(GLOW)
+        p.drawEllipse(tail[tail.size() - 1], 14, 14)
+        p.setBrush(QColor(BRIGHT))
+        p.drawEllipse(tail[tail.size() - 1], 6, 6)
+        p.restore()
+
     def _paint_wave(self, p: QPainter, now: datetime) -> None:
         """Every pulse is a meeting; a second trace appears when two overlap."""
         start = now - WAVE_BEFORE
@@ -431,4 +546,8 @@ class MainWindow(QWidget):
         super().resizeEvent(event)
 
     def mousePressEvent(self, event) -> None:  # noqa: N802 (Qt API)
+        now = datetime.now().astimezone()
+        if self.idle(now):
+            self.peek_until = now + PEEK  # show the full view for a moment
+            self.tick()
         self.refresh()  # tap the screen to sync now

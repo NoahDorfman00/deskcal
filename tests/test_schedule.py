@@ -102,3 +102,24 @@ class FormatTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class IdleTests(unittest.TestCase):
+    now = datetime(2026, 10, 12, 9, 0, tzinfo=UTC)
+    horizon = timedelta(hours=6)
+
+    def test_idle_with_no_meetings(self):
+        self.assertTrue(schedule.is_idle([], self.now, self.horizon))
+
+    def test_idle_until_next_meeting_is_within_horizon(self):
+        events = [ev("a", self.now + timedelta(hours=6, minutes=1))]
+        self.assertTrue(schedule.is_idle(events, self.now, self.horizon))
+        self.assertFalse(schedule.is_idle(events, self.now + timedelta(minutes=1), self.horizon))
+
+    def test_not_idle_during_a_meeting(self):
+        events = [ev("a", self.now - timedelta(minutes=10))]
+        self.assertFalse(schedule.is_idle(events, self.now, self.horizon))
+
+    def test_all_day_events_ignored(self):
+        events = [ev("a", self.now, minutes=24 * 60, all_day=True)]
+        self.assertTrue(schedule.is_idle(events, self.now, self.horizon))
